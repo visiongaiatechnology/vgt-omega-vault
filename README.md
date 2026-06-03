@@ -48,6 +48,9 @@ Found a vulnerability or have an improvement? **Open an issue or contact us.**
 
 ---
 
+<img width="743" height="1086" alt="image" src="https://github.com/user-attachments/assets/9ff4d7ac-46ba-4f8b-9b60-f9ef37508922" />
+
+
 ## 🔐 What is VGT Omega Vault?
 
 The WordPress ecosystem has **58,000+ form plugins.**
