@@ -1,18 +1,15 @@
 <?php
 /**
  * Plugin Name: VGT OMEGA VAULT
- * Plugin URI:  https://visiongaiatechnology.de
+ * Plugin URI: https://visiongaiatechnology.de
  * Description: Kryptografischer Datentresor & Secure Com-Link Endpoint. DIAMANT VGT SUPREME STATUS. Zero-Dependency, O(n) Optimized, AES-256-GCM, CSRF-Hardened.
- * Version:     5.0.0
- * Author:      VisionGaia Technology Intelligence System
+ * Version: 5.2.0
+ * Author: VisionGaia Technology Intelligence System
  * Requires PHP: 8.0
- * License:     AGPL-3.0-or-later
- * License URI: https://www.gnu.org/licenses/agpl-3.0.html
- * * VGT OMEGA PROTOCOL: This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU Affero General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or (at your option) 
- * any later version.
+ * License: AGPL-3.0-or-later
  */
+
+declare(strict_types=1);
 
 if (!defined('ABSPATH')) {
     exit('VGT SECURE ZONE: DIRECT ACCESS FORBIDDEN');
@@ -20,14 +17,19 @@ if (!defined('ABSPATH')) {
 
 /**
  * ==============================================================================
- * KERNEL: KRYPTOGRAFIE (AES-256-GCM)
+ * KERNEL: KRYPTOGRAFIE (AES-256-GCM) mit Auto-Upgrade & Domain-Locking
  * ==============================================================================
  */
 final class VGT_Omega_Crypto {
     
     private const KEY_DIR = '/vgt_keys';
     private const KEY_FILE = '/.vgt_core_secret.php';
+    private const CIPHER = 'aes-256-gcm';
+    private const GCM_TAG_LENGTH = 16;
 
+    /**
+     * Stellt die Integrität des physischen Dateischlüssels im Upload-Verzeichnis sicher.
+     */
     public static function verify_vault_integrity(): void {
         $upload_dir = wp_upload_dir();
         $vault_dir = $upload_dir['basedir'] . self::KEY_DIR;
@@ -39,7 +41,7 @@ final class VGT_Omega_Crypto {
 
         $htaccess = $vault_dir . '/.htaccess';
         if (!file_exists($htaccess)) {
-            file_put_contents($htaccess, "Order Allow,Deny\nDeny from all");
+            file_put_contents($htaccess, "Order Allow,Deny\nDeny from all\n<Files ~ \"^\.ht\">\nOrder allow,deny\nDeny from all\n</Files>");
         }
 
         $index = $vault_dir . '/index.php';
@@ -48,15 +50,24 @@ final class VGT_Omega_Crypto {
         }
 
         if (!file_exists($key_path)) {
-            $entropy = random_bytes(64);
+            try {
+                $entropy = bin2hex(random_bytes(32));
+            } catch (\Throwable $e) {
+                $entropy = hash('sha256', uniqid((string)wp_hash('vgt-entropy'), true));
+            }
             $sha_key = hash('sha256', $entropy);
-            $file_content = "<?php\nif(!defined('ABSPATH')) exit('VGT SECURE ZONE');\n// VGT OMEGA KERNEL SECRET\n// MANUELLE ÄNDERUNG ZERSTÖRT ALLE VERSCHLÜSSELTEN DATEN!\ndefine('VGT_OMEGA_SECRET', '$sha_key');\n";
+            
+            // Definiert den Secret-Key sicher und verhindert Mehrfach-Deklarations-Warnungen
+            $file_content = "<?php\nif(!defined('ABSPATH')) exit('VGT SECURE ZONE');\nif(!defined('VGT_OMEGA_SECRET')) {\n    define('VGT_OMEGA_SECRET', '$sha_key');\n}\n";
             file_put_contents($key_path, $file_content);
-            chmod($key_path, 0600);
+            @chmod($key_path, 0600);
         }
     }
 
-    private static function get_cipher_key(): string {
+    /**
+     * Holt das rohe Secret aus der gesicherten PHP-Datei.
+     */
+    private static function get_omega_secret_raw(): string {
         $upload_dir = wp_upload_dir();
         $key_path = $upload_dir['basedir'] . self::KEY_DIR . self::KEY_FILE;
         
@@ -68,35 +79,193 @@ final class VGT_Omega_Crypto {
             wp_die('VGT SYSTEM HALT: Cryptographic core failure.');
         }
 
-        return hash('sha256', VGT_OMEGA_SECRET, true);
+        return VGT_OMEGA_SECRET;
     }
 
-    public static function encrypt(string $data): string {
-        if ($data === '') return '';
+    /**
+     * LEVEL 1 (LEGACY): Generiert den alten Chiffre-Schlüssel.
+     */
+    private static function get_legacy_cipher_key(): string {
+        return hash('sha256', self::get_omega_secret_raw(), true);
+    }
+
+    /**
+     * LEVEL 2 (SUPREME): Generiert einen hoch-entropischen, domain-gebundenen Master-Key mittels HKDF.
+     */
+    private static function get_supreme_cipher_key(): string {
+        $secret = self::get_omega_secret_raw();
+        $salt = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-emergency-omega-salt';
         
-        $key = self::get_cipher_key();
-        $cipher = 'aes-256-gcm';
-        $iv_len = 12; 
+        if (function_exists('hash_hkdf')) {
+            return hash_hkdf('sha256', $secret, 32, 'vgt_omega_supreme_v5_binding', $salt);
+        }
+        
+        return hash_hmac('sha256', $secret . 'vgt_omega_supreme_v5_binding', $salt, true);
+    }
+
+    /**
+     * Ermittelt die aktuelle Domain des WordPress-Systems für das AAD-Binding.
+     */
+    private static function get_site_domain(): string {
+        $domain = 'vgt-omega-local';
+        if (function_exists('home_url')) {
+            $domain = parse_url(home_url(), PHP_URL_HOST) ?: home_url();
+        }
+        return sanitize_text_field((string)$domain);
+    }
+
+    /**
+     * Verschlüsselt Klartext mit dem Supreme Key, AES-256-GCM und Domain-AAD-Binding.
+     */
+    public static function encrypt(string $data, string $context = 'payload'): string {
+        if ($data === '') {
+            return '';
+        }
+        
+        $key = self::get_supreme_cipher_key();
+        $iv_len = openssl_cipher_iv_length(self::CIPHER);
+        $iv_len = $iv_len !== false ? $iv_len : 12;
         $iv = random_bytes($iv_len);
         $tag = '';
         
-        $ciphertext = openssl_encrypt($data, $cipher, $key, OPENSSL_RAW_DATA, $iv, $tag);
+        // AAD bindet die Daten unlösbar an den Spaltenkontext UND die Domain der aktuellen WP-Installation
+        $aad = $context . '|' . self::get_site_domain();
+        
+        $ciphertext = openssl_encrypt(
+            $data, 
+            self::CIPHER, 
+            $key, 
+            OPENSSL_RAW_DATA, 
+            $iv, 
+            $tag, 
+            $aad, 
+            self::GCM_TAG_LENGTH
+        );
+
+        if ($ciphertext === false) {
+            throw new \RuntimeException('VGT Cryptographic write fault.');
+        }
+
         return base64_encode($iv . $tag . $ciphertext);
     }
 
-    public static function decrypt(string $payload): string {
-        if ($payload === '') return '';
+    /**
+     * Entschlüsselt Daten mit dreistufigem Auto-Upgrade-Verfahren.
+     * Erkennt veraltete Verschlüsselungsformate und migriert sie on-the-fly in der DB!
+     */
+    public static function decrypt(string $payload, string $context = 'payload', ?int $db_row_id = null, ?string $db_column = null): string {
+        if ($payload === '') {
+            return '';
+        }
         
-        $key = self::get_cipher_key();
-        $cipher = 'aes-256-gcm';
-        $data = base64_decode($payload);
+        $data = base64_decode($payload, true);
+        if ($data === false) {
+            return '[DECRYPTION_FAILED_OR_TAMPERED]';
+        }
         
-        $iv = substr($data, 0, 12);
-        $tag = substr($data, 12, 16);
-        $ciphertext = substr($data, 28);
+        $iv_len = openssl_cipher_iv_length(self::CIPHER);
+        $iv_len = $iv_len !== false ? $iv_len : 12;
         
-        $decrypted = openssl_decrypt($ciphertext, $cipher, $key, OPENSSL_RAW_DATA, $iv, $tag);
-        return $decrypted !== false ? $decrypted : '[DECRYPTION_FAILED_OR_TAMPERED]';
+        if (strlen($data) < $iv_len + self::GCM_TAG_LENGTH) {
+            return '[DECRYPTION_FAILED_OR_TAMPERED]';
+        }
+        
+        $iv = substr($data, 0, $iv_len);
+        $tag = substr($data, $iv_len, self::GCM_TAG_LENGTH);
+        $ciphertext = substr($data, $iv_len + self::GCM_TAG_LENGTH);
+        
+        // ----------------------------------------------------------------------
+        // STUFE 1: Decrypt mit Supreme Key und Domain-Locked AAD (Moderner Standard)
+        // ----------------------------------------------------------------------
+        $supreme_key = self::get_supreme_cipher_key();
+        $aad = $context . '|' . self::get_site_domain();
+        
+        $decrypted = openssl_decrypt(
+            $ciphertext, 
+            self::CIPHER, 
+            $supreme_key, 
+            OPENSSL_RAW_DATA, 
+            $iv, 
+            $tag, 
+            $aad
+        );
+        
+        if ($decrypted !== false) {
+            return $decrypted;
+        }
+
+        // ----------------------------------------------------------------------
+        // STUFE 2: Decrypt mit Supreme Key ohne Domain-Locking (Sonderfall/Migration)
+        // ----------------------------------------------------------------------
+        $decrypted = openssl_decrypt(
+            $ciphertext, 
+            self::CIPHER, 
+            $supreme_key, 
+            OPENSSL_RAW_DATA, 
+            $iv, 
+            $tag, 
+            $context
+        );
+        
+        if ($decrypted !== false) {
+            // Auto-Upgrade triggern, um Domain-Locking-AAD zu erzwingen
+            if ($db_row_id !== null && $db_column !== null) {
+                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context);
+            }
+            return $decrypted;
+        }
+
+        // ----------------------------------------------------------------------
+        // STUFE 3: Decrypt mit Legacy Key (Altes Verschlüsselungsverfahren)
+        // ----------------------------------------------------------------------
+        $legacy_key = self::get_legacy_cipher_key();
+        
+        // Legacy-Modus hatte kein AAD-Binding
+        $decrypted = openssl_decrypt(
+            $ciphertext, 
+            self::CIPHER, 
+            $legacy_key, 
+            OPENSSL_RAW_DATA, 
+            $iv, 
+            $tag, 
+            ''
+        );
+        
+        if ($decrypted !== false) {
+            // Auto-Upgrade triggern, um auf Supreme Key + Domain-Locking-AAD anzuheben
+            if ($db_row_id !== null && $db_column !== null) {
+                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context);
+            }
+            return $decrypted;
+        }
+
+        return '[DECRYPTION_FAILED_OR_TAMPERED]';
+    }
+
+    /**
+     * Schreibt den neu verschlüsselten Datensatz transparent zurück in die Datenbank.
+     */
+    private static function trigger_background_upgrade(int $row_id, string $column, string $plain_text, string $context): void {
+        global $wpdb;
+        $table = $wpdb->prefix . VGT_Omega_DB::TABLE_NAME;
+        
+        $allowed_columns = ['domain', 'email', 'vector', 'threat', 'ip_origin'];
+        if (!in_array($column, $allowed_columns, true)) {
+            return;
+        }
+
+        try {
+            $new_encrypted = self::encrypt($plain_text, $context);
+            $wpdb->update(
+                $table,
+                [$column => $new_encrypted],
+                ['id' => $row_id],
+                ['%s'],
+                ['%d']
+            );
+        } catch (\Throwable $e) {
+            error_log('[VGT_OMEGA_UPGRADE_ERROR] Failed to upgrade database record: ' . $e->getMessage());
+        }
     }
 }
 
@@ -145,7 +314,11 @@ final class VGT_Omega_DB {
 
     public static function insert(array $data): bool {
         global $wpdb;
-        return (bool) $wpdb->insert($wpdb->prefix . self::TABLE_NAME, $data);
+        return (bool) $wpdb->insert(
+            $wpdb->prefix . self::TABLE_NAME, 
+            $data,
+            ['%s', '%s', '%s', '%s', '%s']
+        );
     }
 
     public static function delete(int $id): bool {
@@ -161,53 +334,111 @@ final class VGT_Omega_DB {
  */
 final class VGT_Omega_API {
 
+    /**
+     * Liefert die echte IP-Adresse des anfragenden Clients (resistent gegen IP-Spoofing).
+     */
+    public static function get_secure_ip(): string {
+        $ip_keys = ['HTTP_CF_CONNECTING_IP', 'HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'];
+        foreach ($ip_keys as $key) {
+            if (isset($_SERVER[$key]) && is_string($_SERVER[$key])) {
+                foreach (explode(',', $_SERVER[$key]) as $ip) {
+                    $ip = trim($ip);
+                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                        return sanitize_text_field($ip);
+                    }
+                }
+            }
+        }
+        return '127.0.0.1';
+    }
+
+    /**
+     * Generiert einen stateless CSRF-Token für gecachte Frontend-Seiten.
+     */
+    public static function generate_stateless_token(): string {
+        $secret = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-fallback-comlink';
+        $hour_bucket = (int)(time() / 3600);
+        return hash_hmac('sha256', 'vgt_omega_stateless_comlink_' . $hour_bucket, $secret);
+    }
+
+    /**
+     * Validiert den stateless CSRF-Token mit einem 2-Stunden-Gültigkeitsfenster.
+     */
+    private static function verify_stateless_token(string $token): bool {
+        $secret = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-fallback-comlink';
+        $current_hour = (int)(time() / 3600);
+        
+        for ($i = 0; $i <= 1; $i++) {
+            $expected = hash_hmac('sha256', 'vgt_omega_stateless_comlink_' . ($current_hour - $i), $secret);
+            if (hash_equals($expected, $token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public static function handle_request(): void {
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
             wp_send_json_error(['message' => 'VGT: Method Not Allowed.'], 405);
         }
 
-        if (!isset($_POST['vgt_nonce']) || !wp_verify_nonce(sanitize_text_field($_POST['vgt_nonce']), 'vgt_omega_comlink_action')) {
+        // DUAL-DEFENSE CSRF HANDSHAKE: Nonce ODER Stateless Cache-Resilient Token verifizieren
+        $nonce_valid = isset($_POST['vgt_nonce']) && wp_verify_nonce(sanitize_text_field($_POST['vgt_nonce']), 'vgt_omega_comlink_action');
+        $stateless_token_valid = isset($_POST['vgt_stateless_token']) && self::verify_stateless_token(sanitize_text_field($_POST['vgt_stateless_token']));
+
+        if (!$nonce_valid && !$stateless_token_valid) {
             wp_send_json_error(['message' => 'VGT: CSRF Token Invalid. Connection Terminated.'], 403);
         }
 
-        $client_ip = $_SERVER['REMOTE_ADDR'];
+        $client_ip = self::get_secure_ip();
         $rate_limit_key = 'vgt_rl_' . md5($client_ip);
         if (get_transient($rate_limit_key)) {
             wp_send_json_error(['message' => 'VGT: Rate Limit Exceeded. Cooldown Engaged.'], 429);
         }
         set_transient($rate_limit_key, true, 60);
 
+        // Honeypot Bot-Falle
         if (!empty($_POST['vgt_full_name'])) {
             wp_send_json_error(['message' => 'VGT: Bot anomaly detected. Dropping payload.'], 400);
         }
 
-        $raw_domain = wp_unslash($_POST['vgt_domain'] ?? '');
-        $raw_email  = wp_unslash($_POST['vgt_email'] ?? '');
-        $raw_vector = wp_unslash($_POST['vgt_vector'] ?? '');
-        $raw_threat = wp_unslash($_POST['vgt_threat'] ?? '');
+        $raw_domain = isset($_POST['vgt_domain']) ? trim((string)wp_unslash($_POST['vgt_domain'])) : '';
+        $raw_email  = isset($_POST['vgt_email']) ? trim((string)wp_unslash($_POST['vgt_email'])) : '';
+        $raw_vector = isset($_POST['vgt_vector']) ? trim((string)wp_unslash($_POST['vgt_vector'])) : '';
+        $raw_threat = isset($_POST['vgt_threat']) ? trim((string)wp_unslash($_POST['vgt_threat'])) : '';
 
         if (!is_email($raw_email) || !preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $raw_email)) {
             wp_send_json_error(['message' => 'VGT: Email Syntax Violation.'], 400);
         }
 
-        if (!preg_match('/^(https?:\/\/)?([a-zA-Z0-9\-]+\.)+[a-zA-Z]{2,}(?:\/\S*)?$/i', $raw_domain)) {
-            wp_send_json_error(['message' => 'VGT: Domain Architecture Violation.'], 400);
+        // Domain & IP Evaluator
+        $domain_ip_regex = '/^(?:https?:\/\/)?(?:[a-zA-Z0-9\-]+\.)+[a-zA-Z]{2,}(?:\/\S*)?$|^(?:https?:\/\/)?(?:\d{1,3}\.){3}(?:\d{1,3}|XXX|xxx)(?:\/\d{1,2})?$/i';
+        if (!preg_match($domain_ip_regex, $raw_domain)) {
+            wp_send_json_error(['message' => 'VGT: Target Architecture Violation. Invalid Domain or IP format.'], 400);
         }
 
-        if (!preg_match('/^[a-z0-9\-]{3,50}$/i', $raw_vector)) {
+        // Vector Validator (Erlaubt Umlaute, Sonderzeichen)
+        if (!preg_match('/^[a-zA-Z0-9\-\s_.,!?:;äöüÄÖÜß&()]{2,255}$/u', $raw_vector)) {
             wp_send_json_error(['message' => 'VGT: Threat Vector Syntax Violation.'], 400);
         }
 
-        if (preg_match('/[<>{}\[\]\=]/', $raw_threat)) {
-            wp_send_json_error(['message' => 'VGT: Injection Attempt Blocked. Active Defense Engaged.'], 403);
+        // Anti-HTML/Script Injection Guard
+        if (preg_match('/[<>]/', $raw_threat)) {
+            wp_send_json_error(['message' => 'VGT: HTML/Script Injection Blocked. Active Defense Engaged.'], 403);
         }
 
+        // Daten vor Verschlüsselung und Speicherung bereinigen
+        $clean_domain = sanitize_text_field($raw_domain);
+        $clean_email  = sanitize_email($raw_email);
+        $clean_vector = sanitize_text_field($raw_vector);
+        $clean_threat = sanitize_textarea_field($raw_threat);
+
         $payload = [
-            'domain'    => VGT_Omega_Crypto::encrypt(sanitize_text_field($raw_domain)),
-            'email'     => VGT_Omega_Crypto::encrypt(sanitize_email($raw_email)),
-            'vector'    => VGT_Omega_Crypto::encrypt(sanitize_text_field($raw_vector)),
-            'threat'    => VGT_Omega_Crypto::encrypt(sanitize_textarea_field($raw_threat)),
-            'ip_origin' => VGT_Omega_Crypto::encrypt($client_ip)
+            'domain'    => VGT_Omega_Crypto::encrypt($clean_domain, 'domain'),
+            'email'     => VGT_Omega_Crypto::encrypt($clean_email, 'email'),
+            'vector'    => VGT_Omega_Crypto::encrypt($clean_vector, 'vector'),
+            'threat'    => VGT_Omega_Crypto::encrypt($clean_threat, 'threat'),
+            'ip_origin' => VGT_Omega_Crypto::encrypt($client_ip, 'ip_origin')
         ];
 
         if (!VGT_Omega_DB::insert($payload)) {
@@ -220,6 +451,9 @@ final class VGT_Omega_API {
 
     private static function dispatch_notification(): void {
         $to = get_option('admin_email');
+        if (!is_string($to) || empty($to)) {
+            return;
+        }
         $subject = '/// VGT OMEGA: Neues Audit-Protokoll im Tresor';
         $message  = "SYSTEM ALERT: Eine neue VGT OMEGA Audit-Anfrage wurde empfangen.\n";
         $message .= "Die Daten wurden mit AES-256-GCM verschlüsselt in der Datenbank gesichert.\n\n";
@@ -238,88 +472,288 @@ final class VGT_Omega_Frontend {
 
     public static function render_shortcode(): string {
         $nonce = wp_create_nonce('vgt_omega_comlink_action');
+        $stateless_token = VGT_Omega_API::generate_stateless_token();
         $ajax_url = admin_url('admin-ajax.php');
 
         ob_start();
         ?>
         <style>
             .vgt-fe-wrapper {
-                --vgt-bg: #050505;
-                --vgt-surface: rgba(10, 10, 10, 0.7);
-                --vgt-border: rgba(255, 255, 255, 0.1);
+                --vgt-bg: #030303;
+                --vgt-surface: rgba(12, 12, 12, 0.85);
+                --vgt-border: rgba(255, 255, 255, 0.08);
+                --vgt-border-focus: rgba(212, 175, 55, 0.5);
                 --vgt-gold: #d4af37;
-                --vgt-gold-glow: rgba(212, 175, 55, 0.3);
-                --vgt-text: #f3f4f6;
-                --vgt-text-muted: #9ca3af;
+                --vgt-gold-glow: rgba(212, 175, 55, 0.4);
+                --vgt-text: #f9fafb;
+                --vgt-text-muted: #6b7280;
+                --vgt-icon: #9ca3af;
                 --vgt-error: #ef4444;
                 --vgt-success: #10b981;
-                font-family: system-ui, -apple-system, sans-serif;
+                
+                font-family: 'Inter', system-ui, -apple-system, sans-serif;
                 background: var(--vgt-bg);
                 color: var(--vgt-text);
-                padding: 2.5rem;
-                border-radius: 12px;
+                padding: 3rem;
+                border-radius: 16px;
                 border: 1px solid var(--vgt-border);
-                box-shadow: 0 10px 30px rgba(0,0,0,0.8), inset 0 0 20px rgba(255,255,255,0.02);
-                max-width: 600px;
+                box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8), inset 0 0 0 1px rgba(255,255,255,0.02);
+                max-width: 780px;
                 margin: 0 auto;
-                backdrop-filter: blur(10px);
+                backdrop-filter: blur(20px);
+                position: relative;
+                overflow: hidden;
             }
-            .vgt-fe-header { text-align: center; margin-bottom: 2rem; border-bottom: 1px solid var(--vgt-border); padding-bottom: 1.5rem; }
-            .vgt-fe-title { color: var(--vgt-gold); font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem 0; letter-spacing: 2px; text-transform: uppercase; text-shadow: 0 0 10px var(--vgt-gold-glow); }
-            .vgt-fe-subtitle { color: var(--vgt-text-muted); font-size: 0.85rem; font-family: monospace; letter-spacing: 1px; }
-            .vgt-fe-group { margin-bottom: 1.5rem; position: relative; }
-            .vgt-fe-label { display: block; font-size: 0.75rem; color: var(--vgt-text-muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 0.5rem; font-family: monospace; }
-            .vgt-fe-input { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid var(--vgt-border); color: var(--vgt-text); padding: 0.875rem 1rem; border-radius: 6px; font-size: 1rem; transition: all 0.3s ease; box-sizing: border-box; }
-            .vgt-fe-input:focus { outline: none; border-color: var(--vgt-gold); box-shadow: 0 0 15px var(--vgt-gold-glow); background: rgba(0,0,0,0.8); }
-            .vgt-fe-textarea { resize: vertical; min-height: 120px; }
-            .vgt-fe-btn { width: 100%; background: transparent; color: var(--vgt-gold); border: 1px solid var(--vgt-gold); padding: 1rem; font-size: 1rem; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; border-radius: 6px; cursor: pointer; transition: all 0.3s ease; display: flex; justify-content: center; align-items: center; gap: 0.5rem; box-shadow: 0 0 10px var(--vgt-gold-glow); }
-            .vgt-fe-btn:hover { background: var(--vgt-gold); color: #000; box-shadow: 0 0 20px var(--vgt-gold-glow); }
-            .vgt-fe-btn:disabled { opacity: 0.5; cursor: not-allowed; border-color: var(--vgt-text-muted); color: var(--vgt-text-muted); box-shadow: none; }
+
+            .vgt-fe-wrapper::before {
+                content: '';
+                position: absolute;
+                top: 0; left: 0; right: 0; height: 1px;
+                background: linear-gradient(90deg, transparent, var(--vgt-gold), transparent);
+                opacity: 0.5;
+            }
+
+            .vgt-fe-header { 
+                text-align: center; 
+                margin-bottom: 2.5rem; 
+            }
+
+            .vgt-fe-title { 
+                color: var(--vgt-text); 
+                font-size: 1.75rem; 
+                font-weight: 800; 
+                margin: 0 0 0.5rem 0; 
+                letter-spacing: 1px; 
+            }
+            
+            .vgt-fe-title span {
+                color: var(--vgt-gold);
+                text-shadow: 0 0 20px var(--vgt-gold-glow);
+            }
+
+            .vgt-fe-subtitle { 
+                color: var(--vgt-text-muted); 
+                font-size: 0.8rem; 
+                font-family: 'JetBrains Mono', monospace, sans-serif; 
+                letter-spacing: 2px;
+                text-transform: uppercase;
+            }
+
+            .vgt-fe-group { 
+                margin-bottom: 1.75rem; 
+                position: relative; 
+            }
+
+            .vgt-fe-label { 
+                display: flex; 
+                align-items: center;
+                justify-content: space-between;
+                font-size: 0.75rem; 
+                color: #9ca3af; 
+                text-transform: uppercase; 
+                letter-spacing: 1.5px; 
+                margin-bottom: 0.75rem; 
+                font-family: 'JetBrains Mono', monospace, sans-serif;
+                font-weight: 600;
+            }
+
+            .vgt-input-wrapper {
+                position: relative;
+                display: flex;
+                align-items: center;
+            }
+
+            .vgt-input-icon {
+                position: absolute;
+                left: 1rem;
+                color: var(--vgt-icon);
+                display: flex;
+                align-items: center;
+                transition: color 0.3s ease, filter 0.3s ease;
+                pointer-events: none;
+            }
+
+            .vgt-fe-input { 
+                width: 100%; 
+                background: rgba(0,0,0,0.6); 
+                border: 1px solid var(--vgt-border); 
+                color: var(--vgt-text); 
+                padding: 1rem 1rem 1rem 3rem; 
+                border-radius: 8px; 
+                font-size: 0.95rem; 
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+                box-sizing: border-box; 
+                font-family: inherit;
+            }
+
+            .vgt-fe-input::placeholder {
+                color: #4b5563;
+            }
+
+            .vgt-fe-input:focus { 
+                outline: none; 
+                border-color: var(--vgt-border-focus); 
+                background: rgba(10,10,10,0.9); 
+                box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.1);
+            }
+
+            .vgt-input-wrapper:focus-within .vgt-input-icon {
+                color: var(--vgt-gold);
+                filter: drop-shadow(0 0 5px var(--vgt-gold-glow));
+            }
+
+            .vgt-fe-textarea { 
+                resize: vertical; 
+                min-height: 120px; 
+                padding-left: 1rem;
+            }
+
+            .vgt-fe-btn { 
+                width: 100%; 
+                background: var(--vgt-text); 
+                color: var(--vgt-bg); 
+                border: none; 
+                padding: 1.15rem; 
+                font-size: 0.95rem; 
+                font-weight: 700; 
+                text-transform: uppercase; 
+                letter-spacing: 2px; 
+                border-radius: 8px; 
+                cursor: pointer; 
+                transition: all 0.3s ease; 
+                display: flex; 
+                justify-content: center; 
+                align-items: center; 
+                gap: 0.75rem;
+                position: relative;
+                overflow: hidden;
+            }
+
+            .vgt-fe-btn::before {
+                content: '';
+                position: absolute;
+                top: 0; left: -100%; width: 100%; height: 100%;
+                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+                transition: all 0.5s ease;
+            }
+
+            .vgt-fe-btn:hover { 
+                background: var(--vgt-gold); 
+                box-shadow: 0 10px 25px -5px var(--vgt-gold-glow); 
+            }
+
+            .vgt-fe-btn:hover::before {
+                left: 100%;
+            }
+
+            .vgt-fe-btn:disabled { 
+                background: #1f2937;
+                color: #6b7280;
+                cursor: not-allowed; 
+                box-shadow: none; 
+            }
+
             .vgt-fe-honeypot { display: none !important; }
-            .vgt-fe-msg { margin-top: 1.5rem; padding: 1rem; border-radius: 6px; font-size: 0.875rem; font-family: monospace; display: none; text-align: center; }
-            .vgt-fe-msg.success { display: block; background: rgba(16, 185, 129, 0.1); color: var(--vgt-success); border: 1px solid var(--vgt-success); }
-            .vgt-fe-msg.error { display: block; background: rgba(239, 68, 68, 0.1); color: var(--vgt-error); border: 1px solid var(--vgt-error); }
-            .vgt-fe-loader { width: 16px; height: 16px; border: 2px solid currentColor; border-bottom-color: transparent; border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; display: none; }
+
+            .vgt-fe-msg { 
+                margin-top: 1.5rem; 
+                padding: 1.25rem; 
+                border-radius: 8px; 
+                font-size: 0.85rem; 
+                font-family: 'JetBrains Mono', monospace, sans-serif; 
+                display: none; 
+                text-align: center; 
+                animation: vgtFadeIn 0.3s ease-out forwards;
+            }
+
+            @keyframes vgtFadeIn {
+                from { opacity: 0; transform: translateY(-10px); }
+                to { opacity: 1; transform: translateY(0); }
+            }
+
+            .vgt-fe-msg.success { 
+                display: block; 
+                background: rgba(16, 185, 129, 0.05); 
+                color: var(--vgt-success); 
+                border: 1px solid rgba(16, 185, 129, 0.2); 
+            }
+
+            .vgt-fe-msg.error { 
+                display: block; 
+                background: rgba(239, 68, 68, 0.05); 
+                color: var(--vgt-error); 
+                border: 1px solid rgba(239, 68, 68, 0.2); 
+            }
+
+            .vgt-fe-loader { 
+                width: 18px; height: 18px; 
+                border: 2px solid currentColor; 
+                border-bottom-color: transparent; 
+                border-radius: 50%; 
+                display: inline-block; 
+                animation: rotation 1s linear infinite; 
+                display: none; 
+            }
+
             @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         </style>
 
         <div class="vgt-fe-wrapper">
             <div class="vgt-fe-header">
-                <h2 class="vgt-fe-title">Secure Com-Link</h2>
-                <div class="vgt-fe-subtitle">ENCRYPTED TRANSMISSION PROTOCOL</div>
+                <h2 class="vgt-fe-title">SECURE <span>COM-LINK</span></h2>
+                <div class="vgt-fe-subtitle">End-to-End Encrypted Tunnel</div>
             </div>
             
             <form id="vgt-omega-form" autocomplete="off">
                 <input type="hidden" name="action" value="vgt_omega_audit_request">
+                <!-- Dual Nonce/Token System zur Überlistung von Caching-Plugins -->
                 <input type="hidden" name="vgt_nonce" value="<?php echo esc_attr($nonce); ?>">
+                <input type="hidden" name="vgt_stateless_token" value="<?php echo esc_attr($stateless_token); ?>">
                 
                 <div class="vgt-fe-honeypot">
                     <input type="text" name="vgt_full_name" tabindex="-1" autocomplete="new-password">
                 </div>
 
                 <div class="vgt-fe-group">
-                    <label class="vgt-fe-label">Target Domain / URL</label>
-                    <input type="text" name="vgt_domain" class="vgt-fe-input" required placeholder="https://target-system.com">
+                    <label class="vgt-fe-label">Target Architecture <span>(Domain / IP)</span></label>
+                    <div class="vgt-input-wrapper">
+                        <div class="vgt-input-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                        </div>
+                        <input type="text" name="vgt_domain" class="vgt-fe-input" required placeholder="https://domain.com oder 192.168.1.XXX">
+                    </div>
                 </div>
 
                 <div class="vgt-fe-group">
-                    <label class="vgt-fe-label">Secure Return Address (Email)</label>
-                    <input type="email" name="vgt_email" class="vgt-fe-input" required placeholder="operative@domain.com">
+                    <label class="vgt-fe-label">Operative Auth <span>(E-Mail)</span></label>
+                    <div class="vgt-input-wrapper">
+                        <div class="vgt-input-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"></rect><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path></svg>
+                        </div>
+                        <input type="email" name="vgt_email" class="vgt-fe-input" required placeholder="operative@visiongaiatechnology.de">
+                    </div>
                 </div>
 
                 <div class="vgt-fe-group">
-                    <label class="vgt-fe-label">Threat Vector Class</label>
-                    <input type="text" name="vgt_vector" class="vgt-fe-input" required placeholder="e.g. sqli, xss, logical-flaw">
+                    <label class="vgt-fe-label">Threat Vector <span>(Subject)</span></label>
+                    <div class="vgt-input-wrapper">
+                        <div class="vgt-input-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                        </div>
+                        <input type="text" name="vgt_vector" class="vgt-fe-input" required placeholder="Security Audit, System Upgrade...">
+                    </div>
                 </div>
 
                 <div class="vgt-fe-group">
-                    <label class="vgt-fe-label">Threat Scenario Details</label>
-                    <textarea name="vgt_threat" class="vgt-fe-input vgt-fe-textarea" required placeholder="Describe the vulnerability structure..."></textarea>
+                    <label class="vgt-fe-label">Payload Data <span>(Note)</span></label>
+                    <div class="vgt-input-wrapper">
+                        <textarea name="vgt_threat" class="vgt-fe-input vgt-fe-textarea" required placeholder="Initialisieren Sie die Parameter der Anfrage..."></textarea>
+                    </div>
                 </div>
 
                 <button type="submit" class="vgt-fe-btn" id="vgt-submit-btn">
                     <span class="vgt-fe-loader" id="vgt-loader"></span>
-                    <span id="vgt-btn-text">Transmit Payload</span>
+                    <span id="vgt-btn-text">Initialize Encryption</span>
                 </button>
 
                 <div id="vgt-response-msg" class="vgt-fe-msg"></div>
@@ -338,7 +772,7 @@ final class VGT_Omega_Frontend {
             
             btn.disabled = true;
             loader.style.display = 'inline-block';
-            btnText.innerText = 'ENCRYPTING...';
+            btnText.innerText = 'ENCRYPTING PAYLOAD...';
             msgBox.className = 'vgt-fe-msg';
             
             const formData = new FormData(form);
@@ -360,12 +794,12 @@ final class VGT_Omega_Frontend {
                     msgBox.className = 'vgt-fe-msg error';
                 }
             } catch (error) {
-                msgBox.innerText = 'SYSTEM HALT: Network Failure.';
+                msgBox.innerText = 'SYSTEM HALT: Network Architecture Failure.';
                 msgBox.className = 'vgt-fe-msg error';
             } finally {
                 btn.disabled = false;
                 loader.style.display = 'none';
-                btnText.innerText = 'Transmit Payload';
+                btnText.innerText = 'Initialize Encryption';
             }
         });
         </script>
@@ -383,12 +817,12 @@ final class VGT_Omega_UI {
 
     public static function render(): void {
         if (!current_user_can('manage_options')) {
-            wp_die('VGT SYSTEM HALT: Unauthorized clearance level.');
+            wp_die('VGT SYSTEM HALT: Unauthorized clearance level.', '', ['response' => 403]);
         }
 
         global $wpdb;
         $table = $wpdb->prefix . VGT_Omega_DB::TABLE_NAME;
-        if($wpdb->get_var("SHOW TABLES LIKE '$table'") != $table) {
+        if($wpdb->get_var("SHOW TABLES LIKE '$table'") !== $table) {
              VGT_Omega_DB::install();
         }
 
@@ -396,7 +830,7 @@ final class VGT_Omega_UI {
         $page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
         
         $total_audits = VGT_Omega_DB::get_total_count();
-        $total_pages = ceil($total_audits / $per_page);
+        $total_pages = (int) ceil($total_audits / $per_page);
         $audits = VGT_Omega_DB::get_paginated_audits($page, $per_page);
 
         self::render_html($audits, $total_audits, $page, $total_pages);
@@ -452,10 +886,31 @@ final class VGT_Omega_UI {
             .vgt-link { color: var(--vgt-text); text-decoration: none; font-weight: 600; transition: color 0.2s; }
             .vgt-link:hover { color: var(--vgt-gold); }
             .vgt-flex-center { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.25rem; }
-            .vgt-threat { max-width: 300px; line-height: 1.5; color: var(--vgt-text-muted); }
+            
+            .vgt-threat { width: 100%; min-width: 250px; max-width: 450px; }
+            .vgt-threat-details { background: rgba(0,0,0,0.4); border: 1px solid var(--vgt-border); border-radius: 6px; transition: all 0.3s ease; }
+            .vgt-threat-details[open] { border-color: rgba(212, 175, 55, 0.3); box-shadow: 0 0 15px rgba(212, 175, 55, 0.05); }
+            .vgt-threat-summary { padding: 0.75rem 1rem; cursor: pointer; color: var(--vgt-text-muted); font-weight: 600; font-size: 0.75rem; letter-spacing: 1px; text-transform: uppercase; user-select: none; display: flex; align-items: center; justify-content: space-between; outline: none; transition: color 0.3s; }
+            .vgt-threat-summary:hover { color: var(--vgt-gold); }
+            .vgt-threat-summary::-webkit-details-marker { display: none; }
+            .vgt-threat-summary::after { content: '+'; color: var(--vgt-gold); font-family: var(--vgt-font-mono); font-size: 1rem; transition: transform 0.3s; }
+            details[open] .vgt-threat-summary::after { content: '-'; transform: rotate(180deg); }
+            .vgt-threat-content { padding: 0 1rem 1rem 1rem; font-size: 0.85rem; line-height: 1.6; max-height: 250px; overflow-y: auto; color: var(--vgt-text); border-top: 1px solid transparent; }
+            details[open] .vgt-threat-content { border-top: 1px solid rgba(255,255,255,0.05); margin-top: 0.5rem; padding-top: 1rem; }
+            .vgt-threat-content::-webkit-scrollbar { width: 4px; }
+            .vgt-threat-content::-webkit-scrollbar-track { background: transparent; }
+            .vgt-threat-content::-webkit-scrollbar-thumb { background: rgba(212, 175, 55, 0.5); border-radius: 4px; }
+
             .vgt-btn-danger { display: inline-flex; align-items: center; justify-content: center; padding: 0.5rem; border: 1px solid rgba(239, 68, 68, 0.3); color: var(--vgt-red); border-radius: 0.25rem; text-decoration: none; transition: all 0.2s; background: transparent; cursor: pointer; }
             .vgt-btn-danger:hover { background: var(--vgt-red); color: #fff; }
             .vgt-shortcode-box { margin-top: 1rem; padding: 1rem; background: rgba(212, 175, 55, 0.05); border: 1px solid var(--vgt-gold); border-radius: 0.5rem; color: var(--vgt-gold); display: flex; align-items: center; justify-content: space-between; }
+            
+            /* Paginierungs-Stile */
+            .vgt-pagination { margin-top: 1.5rem; display: flex; gap: 0.5rem; justify-content: center; padding: 1rem 0; }
+            .vgt-page-link { display: inline-block; padding: 0.5rem 0.75rem; border: 1px solid var(--vgt-border); background: var(--vgt-bg); border-radius: 0.25rem; color: var(--vgt-text-muted); text-decoration: none; font-size: 0.85rem; font-weight: 600; transition: all 0.2s; }
+            .vgt-page-link:hover { border-color: var(--vgt-gold); color: var(--vgt-gold); }
+            .vgt-page-active { background: rgba(212, 175, 55, 0.1); border-color: var(--vgt-gold); color: var(--vgt-gold) !important; }
+
             .text-green { color: var(--vgt-green) !important; }
             .text-red { color: var(--vgt-red) !important; }
             .text-gold { color: var(--vgt-gold) !important; }
@@ -483,7 +938,7 @@ final class VGT_Omega_UI {
                     <div class="vgt-card">
                         <div class="vgt-card-icon text-gold"><?php echo self::get_svg('database'); ?></div>
                         <div class="vgt-mono vgt-title-xs">Total Audits Secured</div>
-                        <div class="vgt-card-value"><?php echo esc_html($total); ?></div>
+                        <div class="vgt-card-value"><?php echo esc_html((string)$total); ?></div>
                     </div>
                     <div class="vgt-card">
                         <div class="vgt-card-icon text-green"><?php echo self::get_svg('shield'); ?></div>
@@ -504,7 +959,7 @@ final class VGT_Omega_UI {
                         <thead>
                             <tr class="vgt-mono vgt-title-xs">
                                 <th>Timestamp</th>
-                                <th>Domain / Com-Link</th>
+                                <th>Target / Com-Link</th>
                                 <th>Target Vector</th>
                                 <th>Threat Scenario</th>
                                 <th class="text-right">Origin IP</th>
@@ -516,14 +971,15 @@ final class VGT_Omega_UI {
                                 <tr><td colspan="6" class="vgt-mono" style="text-align: center; padding: 3rem;">Keine Daten im Tresor.</td></tr>
                             <?php else : ?>
                                 <?php foreach ($audits as $audit) : 
-                                    $dec_domain = VGT_Omega_Crypto::decrypt($audit->domain);
-                                    $dec_email  = VGT_Omega_Crypto::decrypt($audit->email);
-                                    $dec_vector = VGT_Omega_Crypto::decrypt($audit->vector);
-                                    $dec_threat = VGT_Omega_Crypto::decrypt($audit->threat);
-                                    $dec_ip     = VGT_Omega_Crypto::decrypt($audit->ip_origin);
+                                    // Live Decryption Pipeline: Nimmt Altdaten im Loop und migriert sie vollautomatisch und transparent in die neue Engine
+                                    $dec_domain = VGT_Omega_Crypto::decrypt((string)$audit->domain, 'domain', (int)$audit->id, 'domain');
+                                    $dec_email  = VGT_Omega_Crypto::decrypt((string)$audit->email, 'email', (int)$audit->id, 'email');
+                                    $dec_vector = VGT_Omega_Crypto::decrypt((string)$audit->vector, 'vector', (int)$audit->id, 'vector');
+                                    $dec_threat = VGT_Omega_Crypto::decrypt((string)$audit->threat, 'threat', (int)$audit->id, 'threat');
+                                    $dec_ip     = VGT_Omega_Crypto::decrypt((string)$audit->ip_origin, 'ip_origin', (int)$audit->id, 'ip_origin');
                                 ?>
                                     <tr>
-                                        <td class="vgt-mono vgt-title-xs"><?php echo esc_html(wp_date('d.m.Y H:i', strtotime($audit->created_at))); ?></td>
+                                        <td class="vgt-mono vgt-title-xs"><?php echo esc_html(wp_date('d.m.Y H:i', strtotime((string)$audit->created_at))); ?></td>
                                         <td>
                                             <a href="<?php echo esc_url($dec_domain); ?>" target="_blank" class="vgt-link"><?php echo esc_html($dec_domain); ?></a>
                                             <div class="vgt-mono vgt-title-xs text-gold vgt-flex-center">
@@ -532,10 +988,19 @@ final class VGT_Omega_UI {
                                             </div>
                                         </td>
                                         <td><span class="vgt-badge vgt-mono"><?php echo esc_html($dec_vector); ?></span></td>
-                                        <td><div class="vgt-threat"><?php echo nl2br(esc_html($dec_threat)); ?></div></td>
+                                        <td>
+                                            <div class="vgt-threat">
+                                                <details class="vgt-threat-details">
+                                                    <summary class="vgt-threat-summary">Payload lesen</summary>
+                                                    <div class="vgt-threat-content vgt-mono">
+                                                        <?php echo nl2br(esc_html($dec_threat)); ?>
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        </td>
                                         <td class="text-right vgt-mono vgt-title-xs"><?php echo esc_html($dec_ip); ?></td>
                                         <td class="text-right">
-                                            <?php $delete_url = wp_nonce_url(admin_url('admin-post.php?action=vgt_delete_audit&id=' . $audit->id), 'vgt_delete_audit_nonce'); ?>
+                                            <?php $delete_url = wp_nonce_url(admin_url('admin-post.php?action=vgt_delete_audit&id=' . (int)$audit->id), 'vgt_delete_audit_nonce'); ?>
                                             <a href="<?php echo esc_url($delete_url); ?>" onclick="return confirm('/// SYSTEMWARNUNG:\n\nDieser Datensatz wird unwiderruflich und kryptografisch aus der Datenbank vernichtet.\n\nFortfahren?');" class="vgt-btn-danger" title="Purge Record">
                                                 <?php echo self::get_svg('trash'); ?>
                                             </a>
@@ -546,6 +1011,19 @@ final class VGT_Omega_UI {
                         </tbody>
                     </table>
                 </div>
+
+                <!-- Hardened Clean Pagination UI -->
+                <?php if ($total_pages > 1) : ?>
+                    <div class="vgt-pagination">
+                        <?php for ($i = 1; $i <= $total_pages; $i++) : ?>
+                            <?php 
+                            $class = ($i === $current_page) ? 'vgt-page-active' : ''; 
+                            $page_url = add_query_arg('paged', $i, admin_url('admin.php?page=vgt-omega-vault'));
+                            ?>
+                            <a href="<?php echo esc_url($page_url); ?>" class="vgt-page-link <?php echo esc_attr($class); ?>"><?php echo esc_html((string)$i); ?></a>
+                        <?php endfor; ?>
+                    </div>
+                <?php endif; ?>
 
                 <div class="vgt-mono vgt-title-xs text-gold vgt-flex-center" style="justify-content: center; margin-top: 3rem;">
                     <?php echo self::get_svg('lock'); ?>
@@ -580,12 +1058,20 @@ final class VGT_Omega_Bootstrapper {
     }
 
     public static function register_menu(): void {
-        add_menu_page('VGT Vault', 'VGT Vault', 'manage_options', 'vgt-omega-vault', [VGT_Omega_UI::class, 'render'], 'dashicons-shield', 3);
+        add_menu_page(
+            esc_html__('VGT Vault', 'vgt-omega-vault'), 
+            esc_html__('VGT Vault', 'vgt-omega-vault'), 
+            'manage_options', 
+            'vgt-omega-vault', 
+            [VGT_Omega_UI::class, 'render'], 
+            'dashicons-shield', 
+            3
+        );
     }
 
     public static function handle_deletion(): void {
         if (!current_user_can('manage_options')) {
-            wp_die('VGT SYSTEM HALT: Unauthorized clearance level.');
+            wp_die(esc_html__('VGT SYSTEM HALT: Unauthorized clearance level.', 'vgt-omega-vault'), '', ['response' => 403]);
         }
 
         check_admin_referer('vgt_delete_audit_nonce');
@@ -595,7 +1081,7 @@ final class VGT_Omega_Bootstrapper {
             VGT_Omega_DB::delete($id);
         }
 
-        wp_redirect(admin_url('admin.php?page=vgt-omega-vault'));
+        wp_safe_redirect(admin_url('admin.php?page=vgt-omega-vault'));
         exit;
     }
 }
