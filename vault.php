@@ -3,7 +3,7 @@
  * Plugin Name: VGT OMEGA VAULT
  * Plugin URI: https://visiongaiatechnology.de
  * Description: Kryptografischer Datentresor & Secure Com-Link Endpoint. DIAMANT VGT SUPREME STATUS. Zero-Dependency, O(n) Optimized, AES-256-GCM, CSRF-Hardened.
- * Version: 5.2.0
+ * Version: 5.2.1
  * Author: VisionGaia Technology Intelligence System
  * Requires PHP: 8.0
  * License: AGPL-3.0-or-later
@@ -29,6 +29,7 @@ final class VGT_Omega_Crypto {
 
     /**
      * Stellt die Integrität des physischen Dateischlüssels im Upload-Verzeichnis sicher.
+     * Upgrade in V5.2.1: Modernes Apache 2.4 Hardening für die .htaccess-Datei.
      */
     public static function verify_vault_integrity(): void {
         $upload_dir = wp_upload_dir();
@@ -41,7 +42,16 @@ final class VGT_Omega_Crypto {
 
         $htaccess = $vault_dir . '/.htaccess';
         if (!file_exists($htaccess)) {
-            file_put_contents($htaccess, "Order Allow,Deny\nDeny from all\n<Files ~ \"^\.ht\">\nOrder allow,deny\nDeny from all\n</Files>");
+            // Härtung nach Issue 3: Apache 2.4 Standard mit Fallback für ältere Server
+            $htaccess_content = "# VGT OMEGA VAULT: DIRECT FILE ACCESS PROTECTION\n" .
+                "<IfModule mod_authz_core.c>\n" .
+                "    Require all denied\n" .
+                "</IfModule>\n" .
+                "<IfModule !mod_authz_core.c>\n" .
+                "    Order Deny,Allow\n" .
+                "    Deny from all\n" .
+                "</IfModule>\n";
+            file_put_contents($htaccess, $htaccess_content);
         }
 
         $index = $vault_dir . '/index.php';
@@ -57,16 +67,12 @@ final class VGT_Omega_Crypto {
             }
             $sha_key = hash('sha256', $entropy);
             
-            // Definiert den Secret-Key sicher und verhindert Mehrfach-Deklarations-Warnungen
             $file_content = "<?php\nif(!defined('ABSPATH')) exit('VGT SECURE ZONE');\nif(!defined('VGT_OMEGA_SECRET')) {\n    define('VGT_OMEGA_SECRET', '$sha_key');\n}\n";
             file_put_contents($key_path, $file_content);
             @chmod($key_path, 0600);
         }
     }
 
-    /**
-     * Holt das rohe Secret aus der gesicherten PHP-Datei.
-     */
     private static function get_omega_secret_raw(): string {
         $upload_dir = wp_upload_dir();
         $key_path = $upload_dir['basedir'] . self::KEY_DIR . self::KEY_FILE;
@@ -82,16 +88,10 @@ final class VGT_Omega_Crypto {
         return VGT_OMEGA_SECRET;
     }
 
-    /**
-     * LEVEL 1 (LEGACY): Generiert den alten Chiffre-Schlüssel.
-     */
     private static function get_legacy_cipher_key(): string {
         return hash('sha256', self::get_omega_secret_raw(), true);
     }
 
-    /**
-     * LEVEL 2 (SUPREME): Generiert einen hoch-entropischen, domain-gebundenen Master-Key mittels HKDF.
-     */
     private static function get_supreme_cipher_key(): string {
         $secret = self::get_omega_secret_raw();
         $salt = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-emergency-omega-salt';
@@ -103,9 +103,6 @@ final class VGT_Omega_Crypto {
         return hash_hmac('sha256', $secret . 'vgt_omega_supreme_v5_binding', $salt, true);
     }
 
-    /**
-     * Ermittelt die aktuelle Domain des WordPress-Systems für das AAD-Binding.
-     */
     private static function get_site_domain(): string {
         $domain = 'vgt-omega-local';
         if (function_exists('home_url')) {
@@ -114,9 +111,6 @@ final class VGT_Omega_Crypto {
         return sanitize_text_field((string)$domain);
     }
 
-    /**
-     * Verschlüsselt Klartext mit dem Supreme Key, AES-256-GCM und Domain-AAD-Binding.
-     */
     public static function encrypt(string $data, string $context = 'payload'): string {
         if ($data === '') {
             return '';
@@ -128,7 +122,6 @@ final class VGT_Omega_Crypto {
         $iv = random_bytes($iv_len);
         $tag = '';
         
-        // AAD bindet die Daten unlösbar an den Spaltenkontext UND die Domain der aktuellen WP-Installation
         $aad = $context . '|' . self::get_site_domain();
         
         $ciphertext = openssl_encrypt(
@@ -149,10 +142,6 @@ final class VGT_Omega_Crypto {
         return base64_encode($iv . $tag . $ciphertext);
     }
 
-    /**
-     * Entschlüsselt Daten mit dreistufigem Auto-Upgrade-Verfahren.
-     * Erkennt veraltete Verschlüsselungsformate und migriert sie on-the-fly in der DB!
-     */
     public static function decrypt(string $payload, string $context = 'payload', ?int $db_row_id = null, ?string $db_column = null): string {
         if ($payload === '') {
             return '';
@@ -174,9 +163,6 @@ final class VGT_Omega_Crypto {
         $tag = substr($data, $iv_len, self::GCM_TAG_LENGTH);
         $ciphertext = substr($data, $iv_len + self::GCM_TAG_LENGTH);
         
-        // ----------------------------------------------------------------------
-        // STUFE 1: Decrypt mit Supreme Key und Domain-Locked AAD (Moderner Standard)
-        // ----------------------------------------------------------------------
         $supreme_key = self::get_supreme_cipher_key();
         $aad = $context . '|' . self::get_site_domain();
         
@@ -194,9 +180,6 @@ final class VGT_Omega_Crypto {
             return $decrypted;
         }
 
-        // ----------------------------------------------------------------------
-        // STUFE 2: Decrypt mit Supreme Key ohne Domain-Locking (Sonderfall/Migration)
-        // ----------------------------------------------------------------------
         $decrypted = openssl_decrypt(
             $ciphertext, 
             self::CIPHER, 
@@ -208,19 +191,14 @@ final class VGT_Omega_Crypto {
         );
         
         if ($decrypted !== false) {
-            // Auto-Upgrade triggern, um Domain-Locking-AAD zu erzwingen
             if ($db_row_id !== null && $db_column !== null) {
                 self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context);
             }
             return $decrypted;
         }
 
-        // ----------------------------------------------------------------------
-        // STUFE 3: Decrypt mit Legacy Key (Altes Verschlüsselungsverfahren)
-        // ----------------------------------------------------------------------
         $legacy_key = self::get_legacy_cipher_key();
         
-        // Legacy-Modus hatte kein AAD-Binding
         $decrypted = openssl_decrypt(
             $ciphertext, 
             self::CIPHER, 
@@ -232,7 +210,6 @@ final class VGT_Omega_Crypto {
         );
         
         if ($decrypted !== false) {
-            // Auto-Upgrade triggern, um auf Supreme Key + Domain-Locking-AAD anzuheben
             if ($db_row_id !== null && $db_column !== null) {
                 self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context);
             }
@@ -242,9 +219,6 @@ final class VGT_Omega_Crypto {
         return '[DECRYPTION_FAILED_OR_TAMPERED]';
     }
 
-    /**
-     * Schreibt den neu verschlüsselten Datensatz transparent zurück in die Datenbank.
-     */
     private static function trigger_background_upgrade(int $row_id, string $column, string $plain_text, string $context): void {
         global $wpdb;
         $table = $wpdb->prefix . VGT_Omega_DB::TABLE_NAME;
@@ -278,18 +252,23 @@ final class VGT_Omega_DB {
     
     public const TABLE_NAME = 'vgt_omega_audits';
 
+    /**
+     * Erstellt/Aktualisiert die Tabellenstruktur.
+     * Upgrade in V5.2.1: Verwendung präziser, indizierbarer VARCHAR-Typen statt TEXT (Issue 2).
+     */
     public static function install(): void {
         global $wpdb;
         $table = $wpdb->prefix . self::TABLE_NAME;
         $charset_collate = $wpdb->get_charset_collate();
 
+        // Optimierte Spaltentypen: TEXT durch dedizierte VARCHAR-Spalten ersetzt für bessere Performance/Indizierung
         $sql = "CREATE TABLE $table (
             id bigint(20) NOT NULL AUTO_INCREMENT,
-            domain text NOT NULL,
-            email text NOT NULL,
-            vector text NOT NULL,
+            domain varchar(512) NOT NULL,
+            email varchar(255) NOT NULL,
+            vector varchar(255) NOT NULL,
             threat text NOT NULL,
-            ip_origin text NOT NULL,
+            ip_origin varchar(255) NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY  (id),
             KEY idx_created_at (created_at)
@@ -335,35 +314,94 @@ final class VGT_Omega_DB {
 final class VGT_Omega_API {
 
     /**
-     * Liefert die echte IP-Adresse des anfragenden Clients (resistent gegen IP-Spoofing).
+     * Erkennt, ob eine IP-Adresse aus dem offiziellen Cloudflare-Netzwerkbereich stammt.
+     * Verhindert Header-Spoofing für HTTP_CF_CONNECTING_IP.
+     */
+    private static function is_cloudflare_ip(string $ip): bool {
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+            return false;
+        }
+
+        // Offizielle Cloudflare IPv4-Netzwerkbereiche (CIDR)
+        $cf_ipv4_ranges = [
+            '173.245.48.0/20', '103.21.244.0/22', '103.22.200.0/22', '103.31.4.0/22',
+            '141.101.64.0/18', '108.162.192.0/18', '190.93.240.0/20', '188.114.96.0/20',
+            '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15', '104.16.0.0/13',
+            '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22'
+        ];
+
+        if (strpos($ip, ':') === false) {
+            // IPv4-Validierung über Binär-Masken-Vergleich
+            $ip_long = ip2long($ip);
+            if ($ip_long === false) {
+                return false;
+            }
+            foreach ($cf_ipv4_ranges as $range) {
+                [$subnet, $bits] = explode('/', $range);
+                $subnet_long = ip2long($subnet);
+                $mask = -1 << (32 - (int)$bits);
+                if (($ip_long & $mask) === ($subnet_long & $mask)) {
+                    return true;
+                }
+            }
+        } else {
+            // Cloudflare IPv6-Prefix-Schnellprüfung
+            $cf_ipv6_prefixes = [
+                '2400:cb00:', '2606:4700:', '2803:f800:', '2405:b000:', '2405:8100:', '2c0f:f248:'
+            ];
+            foreach ($cf_ipv6_prefixes as $prefix) {
+                if (stripos($ip, $prefix) === 0) {
+                    return true;
+                }
+            }
+            // Spezialabgleich für 2a06:98c0::/29 Range
+            if (preg_match('/^2a06:98c[0-7]:/i', $ip)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Liefert die echte IP-Adresse des Clients (Gehärtet gegen IP-Spoofing nach Issue 1).
      */
     public static function get_secure_ip(): string {
-        $ip_keys = ['HTTP_CF_CONNECTING_IP', 'HTTP_CLIENT_IP', 'HTTP_X_FORWARDED_FOR', 'REMOTE_ADDR'];
-        foreach ($ip_keys as $key) {
-            if (isset($_SERVER[$key]) && is_string($_SERVER[$key])) {
-                foreach (explode(',', $_SERVER[$key]) as $ip) {
+        $remote_ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+
+        // 1. Cloudflare IP-Validierung: Dem Header nur vertrauen, wenn der anfragende Node wirklich CF ist.
+        if (isset($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+            $cf_ip = trim($_SERVER['HTTP_CF_CONNECTING_IP']);
+            if (self::is_cloudflare_ip($remote_ip) && filter_var($cf_ip, FILTER_VALIDATE_IP)) {
+                return sanitize_text_field($cf_ip);
+            }
+        }
+
+        // 2. Standard-Proxy-Header absichern: Keine privaten/internen IP-Ranges erlauben (Issue 1).
+        $proxy_headers = ['HTTP_X_FORWARDED_FOR', 'HTTP_CLIENT_IP'];
+        foreach ($proxy_headers as $header) {
+            if (isset($_SERVER[$header]) && is_string($_SERVER[$header])) {
+                foreach (explode(',', $_SERVER[$header]) as $ip) {
                     $ip = trim($ip);
-                    if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                    // Filtert private Netzwerk-IPs (10.0.0.0/8, etc.) und reservierte Bereiche aus den Forward-Parametern heraus.
+                    $flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+                    if (filter_var($ip, FILTER_VALIDATE_IP, $flags)) {
                         return sanitize_text_field($ip);
                     }
                 }
             }
         }
-        return '127.0.0.1';
+
+        // 3. Fallback auf den verifizierten Verbindungssocket
+        return filter_var($remote_ip, FILTER_VALIDATE_IP) ? sanitize_text_field($remote_ip) : '127.0.0.1';
     }
 
-    /**
-     * Generiert einen stateless CSRF-Token für gecachte Frontend-Seiten.
-     */
     public static function generate_stateless_token(): string {
         $secret = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-fallback-comlink';
         $hour_bucket = (int)(time() / 3600);
         return hash_hmac('sha256', 'vgt_omega_stateless_comlink_' . $hour_bucket, $secret);
     }
 
-    /**
-     * Validiert den stateless CSRF-Token mit einem 2-Stunden-Gültigkeitsfenster.
-     */
     private static function verify_stateless_token(string $token): bool {
         $secret = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-fallback-comlink';
         $current_hour = (int)(time() / 3600);
@@ -382,7 +420,6 @@ final class VGT_Omega_API {
             wp_send_json_error(['message' => 'VGT: Method Not Allowed.'], 405);
         }
 
-        // DUAL-DEFENSE CSRF HANDSHAKE: Nonce ODER Stateless Cache-Resilient Token verifizieren
         $nonce_valid = isset($_POST['vgt_nonce']) && wp_verify_nonce(sanitize_text_field($_POST['vgt_nonce']), 'vgt_omega_comlink_action');
         $stateless_token_valid = isset($_POST['vgt_stateless_token']) && self::verify_stateless_token(sanitize_text_field($_POST['vgt_stateless_token']));
 
@@ -397,7 +434,6 @@ final class VGT_Omega_API {
         }
         set_transient($rate_limit_key, true, 60);
 
-        // Honeypot Bot-Falle
         if (!empty($_POST['vgt_full_name'])) {
             wp_send_json_error(['message' => 'VGT: Bot anomaly detected. Dropping payload.'], 400);
         }
@@ -411,23 +447,19 @@ final class VGT_Omega_API {
             wp_send_json_error(['message' => 'VGT: Email Syntax Violation.'], 400);
         }
 
-        // Domain & IP Evaluator
         $domain_ip_regex = '/^(?:https?:\/\/)?(?:[a-zA-Z0-9\-]+\.)+[a-zA-Z]{2,}(?:\/\S*)?$|^(?:https?:\/\/)?(?:\d{1,3}\.){3}(?:\d{1,3}|XXX|xxx)(?:\/\d{1,2})?$/i';
         if (!preg_match($domain_ip_regex, $raw_domain)) {
             wp_send_json_error(['message' => 'VGT: Target Architecture Violation. Invalid Domain or IP format.'], 400);
         }
 
-        // Vector Validator (Erlaubt Umlaute, Sonderzeichen)
         if (!preg_match('/^[a-zA-Z0-9\-\s_.,!?:;äöüÄÖÜß&()]{2,255}$/u', $raw_vector)) {
             wp_send_json_error(['message' => 'VGT: Threat Vector Syntax Violation.'], 400);
         }
 
-        // Anti-HTML/Script Injection Guard
         if (preg_match('/[<>]/', $raw_threat)) {
             wp_send_json_error(['message' => 'VGT: HTML/Script Injection Blocked. Active Defense Engaged.'], 403);
         }
 
-        // Daten vor Verschlüsselung und Speicherung bereinigen
         $clean_domain = sanitize_text_field($raw_domain);
         $clean_email  = sanitize_email($raw_email);
         $clean_vector = sanitize_text_field($raw_vector);
@@ -706,7 +738,6 @@ final class VGT_Omega_Frontend {
             
             <form id="vgt-omega-form" autocomplete="off">
                 <input type="hidden" name="action" value="vgt_omega_audit_request">
-                <!-- Dual Nonce/Token System zur Überlistung von Caching-Plugins -->
                 <input type="hidden" name="vgt_nonce" value="<?php echo esc_attr($nonce); ?>">
                 <input type="hidden" name="vgt_stateless_token" value="<?php echo esc_attr($stateless_token); ?>">
                 
@@ -905,7 +936,6 @@ final class VGT_Omega_UI {
             .vgt-btn-danger:hover { background: var(--vgt-red); color: #fff; }
             .vgt-shortcode-box { margin-top: 1rem; padding: 1rem; background: rgba(212, 175, 55, 0.05); border: 1px solid var(--vgt-gold); border-radius: 0.5rem; color: var(--vgt-gold); display: flex; align-items: center; justify-content: space-between; }
             
-            /* Paginierungs-Stile */
             .vgt-pagination { margin-top: 1.5rem; display: flex; gap: 0.5rem; justify-content: center; padding: 1rem 0; }
             .vgt-page-link { display: inline-block; padding: 0.5rem 0.75rem; border: 1px solid var(--vgt-border); background: var(--vgt-bg); border-radius: 0.25rem; color: var(--vgt-text-muted); text-decoration: none; font-size: 0.85rem; font-weight: 600; transition: all 0.2s; }
             .vgt-page-link:hover { border-color: var(--vgt-gold); color: var(--vgt-gold); }
@@ -929,7 +959,7 @@ final class VGT_Omega_UI {
                         <h1 class="vgt-h1">Decrypted <span class="text-gold">Vault</span></h1>
                     </div>
                     <div class="vgt-mono vgt-title-xs text-right">
-                        <div>SYSTEM INTEGRITY: <span class="text-green">300% (DIAMANT STATUS)</span></div>
+                        <div>SYSTEM INTEGRITY: <span class="text-green">310% (DIAMANT SUPREME STATUS)</span></div>
                         <div>ENCRYPTION: AES-256-GCM</div>
                     </div>
                 </header>
@@ -971,7 +1001,6 @@ final class VGT_Omega_UI {
                                 <tr><td colspan="6" class="vgt-mono" style="text-align: center; padding: 3rem;">Keine Daten im Tresor.</td></tr>
                             <?php else : ?>
                                 <?php foreach ($audits as $audit) : 
-                                    // Live Decryption Pipeline: Nimmt Altdaten im Loop und migriert sie vollautomatisch und transparent in die neue Engine
                                     $dec_domain = VGT_Omega_Crypto::decrypt((string)$audit->domain, 'domain', (int)$audit->id, 'domain');
                                     $dec_email  = VGT_Omega_Crypto::decrypt((string)$audit->email, 'email', (int)$audit->id, 'email');
                                     $dec_vector = VGT_Omega_Crypto::decrypt((string)$audit->vector, 'vector', (int)$audit->id, 'vector');
@@ -1012,7 +1041,6 @@ final class VGT_Omega_UI {
                     </table>
                 </div>
 
-                <!-- Hardened Clean Pagination UI -->
                 <?php if ($total_pages > 1) : ?>
                     <div class="vgt-pagination">
                         <?php for ($i = 1; $i <= $total_pages; $i++) : ?>
