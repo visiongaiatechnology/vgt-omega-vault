@@ -2,7 +2,7 @@
 /**
  * Plugin Name: VGT OMEGA VAULT
  * Plugin URI: https://visiongaiatechnology.de
- * Description: Cryptographic Data Safe & Secure Com-Link Endpoint. DIAMANT VGT SUPREME STATUS. Zero-Dependency, O(n) Optimized, AES-256-GCM, CSRF-Hardened.
+ * Description: Cryptographic Data Safe & Secure Com-Link Endpoint. Zero-Dependency, O(n) Optimized, AES-256-GCM, CSRF-Hardened.
  * Version: 5.4.1
  * Author: VisionGaia Technology Intelligence System
  * Requires PHP: 8.0
