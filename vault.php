@@ -3,7 +3,7 @@
  * Plugin Name: VGT OMEGA VAULT
  * Plugin URI: https://visiongaiatechnology.de
  * Description: Cryptographic Data Safe & Secure Com-Link Endpoint. Zero-Dependency, O(n) Optimized, AES-256-GCM, CSRF-Hardened.
- * Version: 5.4.1
+ * Version: 5.3.0
  * Author: VisionGaia Technology Intelligence System
  * Requires PHP: 8.0
  * License: AGPL-3.0-or-later
