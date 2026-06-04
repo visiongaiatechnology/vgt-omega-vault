@@ -13,7 +13,7 @@
 ### Cryptographic Data Vault & Secure Com-Link Endpoint for WordPress
 
 [![License](https://img.shields.io/badge/License-AGPLv3-green?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.2.0-brightgreen?style=for-the-badge)](#)
+[![Version](https://img.shields.io/badge/Version-5.2.1-brightgreen?style=for-the-badge)](#)
 [![PHP](https://img.shields.io/badge/PHP-8.0+-blue?style=for-the-badge&logo=php)](https://php.net)
 [![WordPress](https://img.shields.io/badge/WordPress-6.0+-21759B?style=for-the-badge&logo=wordpress)](https://wordpress.org)
 [![Encryption](https://img.shields.io/badge/Encryption-AES--256--GCM-gold?style=for-the-badge)](#)
@@ -48,8 +48,17 @@ Found a vulnerability or have an improvement? **Open an issue or contact us.**
 
 ---
 
-<img width="743" height="1086" alt="image" src="https://github.com/user-attachments/assets/9ff4d7ac-46ba-4f8b-9b60-f9ef37508922" />
+## 📋 Changelog — V5.2.1
 
+> **V5.2.1 is a security patch release** — three community-reported issues resolved. Special thanks to **[Daniel Ruf](https://github.com/DanielRuf)** for the responsible disclosure of all three findings.
+
+| Issue | Fix |
+|---|---|
+| **IP-Spoofing via CF-Connecting-IP** | `is_cloudflare_ip()` CIDR validator — `HTTP_CF_CONNECTING_IP` trusted only when request originates from a verified Cloudflare IP range |
+| **Database Column Types** | `domain`, `email`, `vector`, `ip_origin` migrated from `text` to `varchar(...)` — full MySQL index support, reduced I/O overhead |
+| **Apache 2.4 .htaccess Compatibility** | `<IfModule mod_authz_core.c>` guard added — `Require all denied` on Apache 2.4+, legacy `Deny from all` fallback preserved for older environments |
+
+---
 
 ## 🔐 What is VGT Omega Vault?
 
@@ -186,23 +195,32 @@ Rotating Stateless Token (V5.2.0):
 
 Both layers must pass independently. Bypassing one does not bypass the other.
 
-### IP-Spoofing & Header-Injection Protection *(New in V5.2.0)*
+### IP-Spoofing & Header-Injection Protection *(V5.2.0 + hardened in V5.2.1)*
 
-The previous IP resolution read `HTTP_X_FORWARDED_FOR` naively — trivially spoofable. V5.2.0 replaces this with a **hardened proxy evaluator**:
+The previous IP resolution read `HTTP_X_FORWARDED_FOR` naively — trivially spoofable. V5.2.0 introduced a hardened proxy evaluator. **V5.2.1 closes the remaining trust gap** — `CF-Connecting-IP` is now only accepted when the request actually originates from a verified Cloudflare IP range:
 
 ```
-Evaluation Chain:
-  1. Is request arriving from a known Cloudflare CIDR? → read CF-Connecting-IP
-  2. Is request arriving from a trusted reverse proxy?  → read X-Real-IP
+Evaluation Chain (V5.2.1):
+  1. Is REMOTE_ADDR in the Cloudflare IPv4/IPv6 CIDR list?
+     → YES: read CF-Connecting-IP (trusted)
+     → NO:  CF-Connecting-IP ignored entirely
+  2. Is request arriving from a trusted reverse proxy?
+     → YES: read X-Real-IP
   3. Fallback: REMOTE_ADDR (direct connection)
+
+is_cloudflare_ip() — validated CIDR ranges (IPv4 + IPv6):
+  173.245.48.0/20, 103.21.244.0/22, 103.22.200.0/22 ...
+  2400:cb00::/32, 2606:4700::/32 ...
 
 Header-Injection Guard:
   Multi-IP values in X-Forwarded-For → first valid IP extracted
+  Private ranges (10.x, 192.168.x, 172.16.x) → filtered via
+    FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
   Non-IP values injected into headers → blocked, REMOTE_ADDR used
-  Header value exceeding 45 chars     → blocked immediately
+  Header value exceeding 45 chars → blocked immediately
 ```
 
-Spoofed `X-Forwarded-For` values no longer affect rate limiting or IP logging.
+Spoofed `CF-Connecting-IP` or `X-Forwarded-For` values no longer affect rate limiting or IP logging.
 
 ---
 
@@ -218,6 +236,9 @@ Stored in DB:               What attackers see:
 ```
 
 Even with full database access, all data remains **cryptographically worthless.**
+
+**V5.2.1 — Column Type Optimization:**
+`domain`, `email`, `vector`, and `ip_origin` are now defined as `varchar(...)` instead of `text`. MySQL can fully index `varchar` columns and keep them in the InnoDB buffer pool in RAM — `text` columns are stored off-page and read from disk on every access. The encrypted payload column `threat` remains `text` to accommodate variable-length ciphertext.
 
 ---
 
@@ -384,7 +405,24 @@ V5.2.0 Auto-Upgrade Engine:
   Key migration between encryption generations is handled automatically.
   Manual data re-encryption scripts are no longer required.
   Records upgrade to the current key on first read — silently, in RAM.
+
+V5.2.1 .htaccess (Apache 2.4+ compatible):
+  The generated .htaccess uses <IfModule mod_authz_core.c> to detect
+  the Apache version and apply the correct directive:
+    Apache 2.4+:  Require all denied
+    Apache 2.2:   Deny from all (legacy fallback)
+  No server warnings or permission mismatches on modern hosting environments.
 ```
+
+---
+
+## 🏆 Acknowledgments
+
+| Contributor | Contribution |
+|---|---|
+| **[Daniel Ruf](https://github.com/DanielRuf)** | Responsible disclosure of 3 security issues (V5.2.1): CF-Connecting-IP trust bypass, database column type inefficiency, Apache 2.4 .htaccess incompatibility |
+
+Security researchers who responsibly disclose vulnerabilities are credited here. To report a finding, open an issue or use the VGT Comlink.
 
 ---
 
@@ -421,9 +459,4 @@ Anyone using and modifying this plugin must publish changes under AGPLv3.
 
 [![VGT](https://img.shields.io/badge/VisionGaia-Technology-gold?style=for-the-badge)](https://visiongaiatechnology.de)
 
-```
-All data encrypted. Zero unencrypted disk state.
-Decryption occurs on-the-fly directly in RAM.
-```
-
-</div>
+*VGT Omega Vault v5.2.1 — Cryptographic Data Vault // AES-256-GCM // Zero Disk State // Dual-Defense CSRF // Cloudflare CIDR Validation // varchar DB Optimization // Apache 2.4 Compatible // GDPR-compliant by design // AGPLv3*
