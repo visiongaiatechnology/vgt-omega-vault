@@ -73,7 +73,7 @@ final class VGT_Omega_UI {
                         <h1 class="vgt-h1"><?php echo esc_html__('Cryptographic', 'vgt-omega-vault'); ?> <span class="text-gold"><?php echo esc_html__('Vault', 'vgt-omega-vault'); ?></span></h1>
                     </div>
                     <div class="vgt-header-meta">
-                        <div><?php echo esc_html__('VGT-KERNEL:', 'vgt-omega-vault'); ?> <span class="text-gold"><?php echo esc_html__('V5.4.1 (DECOUPLED)', 'vgt-omega-vault'); ?></span></div>
+                        <div><?php echo esc_html__('VGT-KERNEL:', 'vgt-omega-vault'); ?> <span class="text-gold"><?php echo esc_html__('V5.3.0 (DECOUPLED)', 'vgt-omega-vault'); ?></span></div>
                         <div><?php echo esc_html__('CIPHER ALGORITHM:', 'vgt-omega-vault'); ?> <span class="text-gold"><?php echo esc_html__('AES-256-GCM', 'vgt-omega-vault'); ?></span></div>
                     </div>
                 </header>
