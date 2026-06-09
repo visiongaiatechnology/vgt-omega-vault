@@ -16,7 +16,7 @@ if (!defined('ABSPATH')) {
 }
 
 /**
- * Explicit Proxy-Trust-Configuration (Daniel Ruf Hardening V5.3.0)
+ * Explicit Proxy-Trust-Configuration (Hardening V5.3.0)
  * Disabled by default to prevent spoofing. Override in wp-config.php if required.
  */
 if (!defined('VGT_ALLOW_PROXIES')) {
