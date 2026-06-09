@@ -137,7 +137,7 @@ final class VGT_Omega_UI {
                                 <div class="vgt-log-entry" style="color: var(--vgt-gold);">
                                     <span class="timestamp">[<?php echo esc_html(current_time('H:i:s')); ?>]</span>
                                     <span class="status-tag">[WARN]</span>
-                                    <?php echo esc_html__('Client-forwarded proxy header trust is active. Daniel Ruf Spoof-Blocker standby.', 'vgt-omega-vault'); ?>
+                                    <?php echo esc_html__('Client-forwarded proxy header trust is active. Spoof-Blocker standby.', 'vgt-omega-vault'); ?>
                                 </div>
                             <?php else : ?>
                                 <div class="vgt-log-entry" style="color: var(--vgt-green);">
@@ -293,7 +293,7 @@ final class VGT_Omega_UI {
                             <div class="vgt-config-card">
                                 <div class="vgt-title-xs" style="margin-bottom: 1.5rem; color: #fff;"><?php echo esc_html__('Operational Hardening Parameters', 'vgt-omega-vault'); ?></div>
                                 
-                                <!-- Toggle Proxy Trust (Daniel Ruf Opt-In Specification) -->
+                                <!-- Toggle Proxy Trust (Opt-In Specification) -->
                                 <div class="vgt-config-row">
                                     <div class="vgt-config-info">
                                         <h3 class="vgt-config-title"><?php echo esc_html__('Trust Forwarded Proxies', 'vgt-omega-vault'); ?></h3>
