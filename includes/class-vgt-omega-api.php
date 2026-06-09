@@ -1,6 +1,6 @@
 <?php
 /**
- * VGT OMEGA VAULT: API Endpoint, Defense Shield & IP Hardening (Daniel Ruf Spezifikation)
+ * VGT OMEGA VAULT: API Endpoint, Defense Shield & IP Hardening 
  */
 
 declare(strict_types=1);
