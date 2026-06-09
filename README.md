@@ -13,7 +13,7 @@
 ### Cryptographic Data Vault & Secure Com-Link Endpoint for WordPress
 
 [![License](https://img.shields.io/badge/License-AGPLv3-green?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.2.1-brightgreen?style=for-the-badge)](#)
+[![Version](https://img.shields.io/badge/Version-5.3.0-brightgreen?style=for-the-badge)](#)
 [![PHP](https://img.shields.io/badge/PHP-8.0+-blue?style=for-the-badge&logo=php)](https://php.net)
 [![WordPress](https://img.shields.io/badge/WordPress-6.0+-21759B?style=for-the-badge&logo=wordpress)](https://wordpress.org)
 [![Encryption](https://img.shields.io/badge/Encryption-AES--256--GCM-gold?style=for-the-badge)](#)
@@ -35,30 +35,20 @@ Found a vulnerability or have an improvement? **Open an issue or contact us.**
 
 ---
 
-## 📋 Changelog — V5.2.0
+## 📋 Changelog — V5.3.0
 
-> **V5.2.0 delivers four structural security upgrades.** No cosmetic changes — every item closes a concrete attack surface or eliminates a failure mode.
+> **V5.3.0 is an architectural overhaul.** Monolith decomposed into isolated kernel modules, dual-vector IP forensics at database level, and automated regression tests.
 
-| Feature | What Changed |
-|---|---|
-| **Dual-Defense CSRF-Shield** | Stateless rotating token added alongside nonce — forms remain CSRF-immune even on cached pages |
-| **Live Decrypt-and-Auto-Upgrade Engine** | Three-tier key fallback with in-place re-encryption — zero-downtime key migration |
-| **IP-Spoofing & Header-Injection Protection** | Hardened proxy evaluator — manipulated `X-Forwarded-For` and similar headers detected and blocked |
-| **Lückenloses Escaping & Secure Pagination** | Context-specific output escaping across all admin output + paginated Vault dashboard in Platinum design |
-
----
-
-## 📋 Changelog — V5.2.1
-
-> **V5.2.1 is a security patch release** — three community-reported issues resolved. Special thanks to **[Daniel Ruf](https://github.com/DanielRuf)** for the responsible disclosure of all three findings.
-
-| Issue | Fix |
-|---|---|
-| **IP-Spoofing via CF-Connecting-IP** | `is_cloudflare_ip()` CIDR validator — `HTTP_CF_CONNECTING_IP` trusted only when request originates from a verified Cloudflare IP range |
-| **Database Column Types** | `domain`, `email`, `vector`, `ip_origin` migrated from `text` to `varchar(...)` — full MySQL index support, reduced I/O overhead |
-| **Apache 2.4 .htaccess Compatibility** | `<IfModule mod_authz_core.c>` guard added — `Require all denied` on Apache 2.4+, legacy `Deny from all` fallback preserved for older environments |
+| Area | V5.2.1 | V5.3.0 |
+|---|---|---|
+| **Architecture** | Monolithic single-file plugin | Modular `includes/` kernel directory — strict separation of concerns |
+| **IP Storage** | Single `ip_origin` column — socket and claimed IP merged | `ip_socket` (REMOTE_ADDR, unforgeable) + `ip_claimed` (header-submitted) — physically separated |
+| **Proxy Trust Model** | Proxy headers evaluated by default | Zero-Trust default — proxy header evaluation requires explicit admin opt-in (`vgt_omega_allow_proxies`) |
+| **Test Coverage** | No automated tests — manual click-through only | `phpunit1.php` standalone regression suite — no WordPress core required |
 
 ---
+
+
 
 ## 🔐 What is VGT Omega Vault?
 
@@ -89,7 +79,7 @@ VGT Omega Vault:
 
 ---
 
-## 🏛️ Architecture — The Four Kernels
+## 🏛️ Architecture — The Four Kernels *(Modularized V5.3.0)*
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -100,10 +90,17 @@ VGT Omega Vault:
 │              │              │              │            │
 │ AES-256-GCM  │  Abstracted  │  Dual CSRF   │  Shortcode │
 │ GCM Auth Tag │  Pagination  │  Rate Limit  │  Generator │
-│ Random IV    │  Encrypted   │  Honeypot    │  Gold UI   │
-│ Auto-Upgrade │  Storage     │  IP Hardened │  AJAX      │
-│ 3-Tier Keys  │  Platinum UI │  Inj. Guard  │            │
+│ Random IV    │  Dual-Vector │  Honeypot    │  Gold UI   │
+│ Auto-Upgrade │  IP Storage  │  Zero-Trust  │  AJAX      │
+│ 3-Tier Keys  │  Platinum UI │  IP Profiler │            │
 └──────────────┴──────────────┴──────────────┴────────────┘
+
+V5.3.0 Module Layout (includes/):
+  VGT_Omega_Crypto    ← AES-256-GCM + key validity — isolated
+  VGT_Omega_DB        ← pure data abstraction layer
+  VGT_Omega_API       ← firewall + validation pipeline + IP profiler
+  VGT_Omega_Frontend  ← client-side rendering engine
+  VGT_Omega_UI        ← admin-side rendering engine (strictly separated)
 ```
 
 ---
@@ -195,32 +192,40 @@ Rotating Stateless Token (V5.2.0):
 
 Both layers must pass independently. Bypassing one does not bypass the other.
 
-### IP-Spoofing & Header-Injection Protection *(V5.2.0 + hardened in V5.2.1)*
+### IP-Spoofing & Zero-Trust Proxy Protocol *(V5.2.0 → V5.2.1 → V5.3.0)*
 
-The previous IP resolution read `HTTP_X_FORWARDED_FOR` naively — trivially spoofable. V5.2.0 introduced a hardened proxy evaluator. **V5.2.1 closes the remaining trust gap** — `CF-Connecting-IP` is now only accepted when the request actually originates from a verified Cloudflare IP range:
+V5.2.0 introduced a hardened proxy evaluator. V5.2.1 added Cloudflare CIDR validation. **V5.3.0 changes the default trust model entirely** — proxy header evaluation is now opt-in, not opt-out:
 
 ```
-Evaluation Chain (V5.2.1):
-  1. Is REMOTE_ADDR in the Cloudflare IPv4/IPv6 CIDR list?
-     → YES: read CF-Connecting-IP (trusted)
-     → NO:  CF-Connecting-IP ignored entirely
-  2. Is request arriving from a trusted reverse proxy?
-     → YES: read X-Real-IP
-  3. Fallback: REMOTE_ADDR (direct connection)
+V5.3.0 Zero-Trust Default (vgt_omega_allow_proxies = false):
+  → ALL proxy headers ignored (X-Forwarded-For, CF-Connecting-IP, X-Real-IP)
+  → ip_socket = REMOTE_ADDR always
+  → ip_claimed = empty
+  → Rate limiting and IP logging always use the real TCP socket
+  → No spoofing vector exists — there is no header to manipulate
 
-is_cloudflare_ip() — validated CIDR ranges (IPv4 + IPv6):
-  173.245.48.0/20, 103.21.244.0/22, 103.22.200.0/22 ...
-  2400:cb00::/32, 2606:4700::/32 ...
-
-Header-Injection Guard:
-  Multi-IP values in X-Forwarded-For → first valid IP extracted
-  Private ranges (10.x, 192.168.x, 172.16.x) → filtered via
-    FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
-  Non-IP values injected into headers → blocked, REMOTE_ADDR used
-  Header value exceeding 45 chars → blocked immediately
+V5.3.0 Proxy Opt-In (vgt_omega_allow_proxies = true):
+  → Admin explicitly enables proxy header evaluation
+  → Cloudflare CIDR validation active (V5.2.1 logic retained)
+  → Private ranges filtered via FILTER_FLAG_NO_PRIV_RANGE
+  → ip_claimed populated from validated header value
+  → ip_socket always retained as ground truth
 ```
 
-Spoofed `CF-Connecting-IP` or `X-Forwarded-For` values no longer affect rate limiting or IP logging.
+```
+Evaluation Chain (Opt-In mode):
+  1. Is REMOTE_ADDR in Cloudflare IPv4/IPv6 CIDR list?
+     → YES: read CF-Connecting-IP → ip_claimed
+     → NO:  CF-Connecting-IP ignored
+  2. Trusted reverse proxy? → read X-Real-IP → ip_claimed
+  3. Fallback: ip_claimed = empty, ip_socket used for all decisions
+
+Header-Injection Guard (active in both modes):
+  Multi-IP X-Forwarded-For → first valid IP extracted
+  Private ranges → filtered (FILTER_FLAG_NO_PRIV_RANGE | NO_RES_RANGE)
+  Non-IP header values → blocked, REMOTE_ADDR used
+  Header > 45 chars → blocked immediately
+```
 
 ---
 
@@ -232,13 +237,34 @@ Stored in DB:               What attackers see:
   email     → Ciphertext      Lp4vN8kJhFmD3...
   vector    → Ciphertext      Wq6tR1uYcEiOx...
   threat    → Ciphertext      Bs5aG0ePzHlVn...
-  ip_origin → Ciphertext      Tx2jM7yKdCfUw...
+  ip_socket → Ciphertext      Tx2jM7yKdCfUw...   ← REMOTE_ADDR (unforgeable)
+  ip_claimed→ Ciphertext      Rx9nP2qVsHlKe...   ← header-submitted IP (V5.3.0)
 ```
 
 Even with full database access, all data remains **cryptographically worthless.**
 
-**V5.2.1 — Column Type Optimization:**
-`domain`, `email`, `vector`, and `ip_origin` are now defined as `varchar(...)` instead of `text`. MySQL can fully index `varchar` columns and keep them in the InnoDB buffer pool in RAM — `text` columns are stored off-page and read from disk on every access. The encrypted payload column `threat` remains `text` to accommodate variable-length ciphertext.
+**V5.3.0 — Dual-Vector IP Forensics:**
+
+V5.2.1 stored a single `ip_origin` column that merged socket and claimed IP into one value — making it impossible post-write to distinguish whether a stored IP was the real TCP connection or a spoofed header value.
+
+V5.3.0 separates them physically:
+
+```
+ip_socket  = REMOTE_ADDR
+             → The actual TCP connection endpoint
+             → Unforgeable at network level
+             → Always written, regardless of proxy settings
+
+ip_claimed = X-Forwarded-For / CF-Connecting-IP (after CIDR validation)
+             → What the client claims to be
+             → Only populated when vgt_omega_allow_proxies = true
+             → Empty in Zero-Trust default mode
+```
+
+This enables forensic reconstruction: even after an attack, the database distinguishes between "what IP connected" and "what IP was claimed."
+
+**V5.2.1 — Column Type Optimization (retained):**
+`domain`, `email`, `vector`, and both IP columns use `varchar(...)` — full MySQL index support, InnoDB buffer pool resident. The encrypted payload column `threat` remains `text`.
 
 ---
 
@@ -373,22 +399,51 @@ VGT Omega Vault (free):      AES-256-GCM. Zero Disk State.
 
 ```
 vgt-omega-vault/
-├── vgt-omega-vault.php      ← main plugin file
+├── vgt-omega-vault.php          ← bootstrapper + lifecycle hooks
 │
-├── Kernels (inline):
-│   ├── VGT_Omega_Crypto     ← AES-256-GCM + Auto-Upgrade Engine (3-tier)
-│   ├── VGT_Omega_DB         ← database abstraction + paginated reads
-│   ├── VGT_Omega_API        ← Dual CSRF + IP hardening + 11-layer defense
-│   ├── VGT_Omega_Frontend   ← shortcode + CSRF token injection
-│   ├── VGT_Omega_UI         ← admin vault dashboard + Platinum pagination
-│   └── VGT_Omega_Bootstrap  ← system initialization
+├── includes/                    ← modular kernel directory (V5.3.0)
+│   ├── class-vgt-omega-crypto.php   ← AES-256-GCM + 3-tier key engine
+│   ├── class-vgt-omega-db.php       ← data abstraction + dual-vector IP + pagination
+│   ├── class-vgt-omega-api.php      ← firewall + validation pipeline + IP profiler
+│   ├── class-vgt-omega-frontend.php ← client-side rendering engine
+│   └── class-vgt-omega-ui.php       ← admin rendering engine (strictly separated)
+│
+├── assets/
+│   ├── vgt-omega.js             ← AJAX + CSRF token injection (decoupled)
+│   └── vgt-omega.css            ← Platinum/Gold UI styles (decoupled)
+│
+├── phpunit1.php                 ← standalone regression tests (V5.3.0)
 │
 └── Auto-generated:
     └── wp-content/uploads/vgt_keys/
-        ├── .htaccess            ← direct access blocked
-        ├── index.php            ← zero-space guard
-        └── .vgt_core_secret.php ← AES key (chmod 0600)
+        ├── .htaccess                ← direct access blocked
+        ├── index.php                ← zero-space guard
+        └── .vgt_core_secret.php     ← AES key (chmod 0600)
 ```
+
+---
+
+## 🧪 Automated Regression Tests *(New in V5.3.0)*
+
+V5.2.1 had no automated tests — changes required manual validation in a full WordPress environment. V5.3.0 ships `phpunit1.php`: a standalone regression suite that tests core IP parsing logic without loading WordPress.
+
+```bash
+# Run standalone — no WordPress installation required
+php phpunit1.php
+
+# Or via PHPUnit if installed
+./vendor/bin/phpunit phpunit1.php
+```
+
+**Test coverage includes:**
+- IP chain parsing from `X-Forwarded-For` multi-value headers
+- Private IPv4 range filtering (`10.x`, `192.168.x`, `172.16.x`)
+- Private IPv6 range filtering (`::1`, `fc00::/7`)
+- Cloudflare CIDR validation (`is_cloudflare_ip()`)
+- Dual-vector socket/claimed IP separation logic
+- Edge cases: empty headers, malformed values, oversized strings
+
+Suitable for CI/CD pipeline integration — add to GitHub Actions or any runner without a WordPress environment dependency.
 
 ---
 
@@ -459,4 +514,4 @@ Anyone using and modifying this plugin must publish changes under AGPLv3.
 
 [![VGT](https://img.shields.io/badge/VisionGaia-Technology-gold?style=for-the-badge)](https://visiongaiatechnology.de)
 
-*VGT Omega Vault v5.2.1 — Cryptographic Data Vault // AES-256-GCM // Zero Disk State // Dual-Defense CSRF // Cloudflare CIDR Validation // varchar DB Optimization // Apache 2.4 Compatible // GDPR-compliant by design // AGPLv3*
+*VGT Omega Vault v5.3.0 — Modular Kernel Architecture // Dual-Vector IP Forensics // Zero-Trust Proxy Protocol // AES-256-GCM // Dual-Defense CSRF // Cloudflare CIDR Validation // Automated Regression Tests // GDPR-compliant by design // AGPLv3*
