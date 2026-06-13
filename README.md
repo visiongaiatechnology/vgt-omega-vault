@@ -99,6 +99,10 @@ V5.3.0 had no multi-step capability — single-page data submission only. V6.0.0
 
 ---
 
+<img width="2549" height="1160" alt="image" src="https://github.com/user-attachments/assets/a711b39f-4ba3-4829-b496-d64e518a88a6" />
+
+
+
 ## 🔐 What is VGT Omega Vault?
 
 The WordPress ecosystem has **58,000+ form plugins.**
@@ -109,6 +113,10 @@ Not a single one encrypts data before writing it to the database.
 A cryptographic data vault and **Drag-and-Drop form builder** that **immediately encrypts every incoming record with AES-256-GCM** before it ever touches the database. Plaintext exists exclusively in RAM — for milliseconds — and nowhere else.
 
 Built for **law firms, medical practices, tax advisors, and anyone receiving confidential inquiries through WordPress** while maintaining full GDPR compliance.
+
+
+<img width="2536" height="1157" alt="image" src="https://github.com/user-attachments/assets/6ef21e5b-9a4e-46d8-b177-aa6c9dde1fe8" />
+
 
 ---
 
@@ -154,6 +162,9 @@ V6.0.0 Module Layout (includes/):
   VGT_Omega_UI        ← admin rendering engine + drag-and-drop live builder
   VGT_Omega_Builder   ← form/funnel composition engine + CSS custom properties
 ```
+
+<img width="2546" height="1160" alt="image" src="https://github.com/user-attachments/assets/3f7c962f-5d88-4f6a-9997-bee95b317f2a" />
+
 
 ---
 
