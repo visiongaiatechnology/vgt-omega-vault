@@ -13,7 +13,7 @@
 ### Cryptographic Data Vault & Secure Com-Link Endpoint for WordPress
 
 [![License](https://img.shields.io/badge/License-AGPLv3-green?style=for-the-badge)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-5.3.0-brightgreen?style=for-the-badge)](#)
+[![Version](https://img.shields.io/badge/Version-6.0.0-brightgreen?style=for-the-badge)](#)
 [![PHP](https://img.shields.io/badge/PHP-8.0+-blue?style=for-the-badge&logo=php)](https://php.net)
 [![WordPress](https://img.shields.io/badge/WordPress-6.0+-21759B?style=for-the-badge&logo=wordpress)](https://wordpress.org)
 [![Encryption](https://img.shields.io/badge/Encryption-AES--256--GCM-gold?style=for-the-badge)](#)
@@ -35,9 +35,60 @@ Found a vulnerability or have an improvement? **Open an issue or contact us.**
 
 ---
 
-## 📋 Changelog — V5.3.0
+## 📋 Changelog — V6.0.0
 
-> **V5.3.0 is an architectural overhaul.** Monolith decomposed into isolated kernel modules, dual-vector IP forensics at database level, and automated regression tests.
+> **V6.0.0 is a paradigm shift.** The static single-channel protocol logger has been completely rearchitected into a fully configurable, encrypted Drag-and-Drop form and funnel builder. V5.3.0 is now legacy.
+
+### Evolution Matrix: V5.3.0 (Legacy) → V6.0.0 (DIAMANT SUPREME)
+
+#### 1. System Architecture & Data Structure
+
+| Parameter | V5.3.0 (Legacy) | V6.0.0 (Current) |
+|---|---|---|
+| **Form Mode** | Static (4 predefined fields) | Dynamic (unlimited forms and funnels) |
+| **Storage Entity** | Single table (`wp_vgt_omega_audits`) | Three tables (`wp_vgt_omega_audits`, `wp_vgt_omega_forms`, `wp_vgt_omega_submissions`) |
+| **Shortcode Interface** | Global shortcode `[vgt_omega_comlink]` | Instanced shortcodes `[vgt_omega_form id="X"]` with backward-compatibility mapping |
+| **Field Types** | Hardcoded (Text, Email, Textarea) | Text, Email, Number, Textarea, Select, Radio, File, Headings, Paragraphs, Images, Videos |
+
+#### 2. Architectural Hardening & Cryptography
+
+**Form-Bound AAD Binding:**
+
+V5.3.0 AES-256-GCM encrypted payloads were bound only to domain and type context. V6.0.0 extends the Additional Authenticated Data (AAD) binding to include the `form_id` (`$context | Domain | Form_ID`). Ciphertexts are cryptographically locked to their originating form instance — cross-form transfers or manipulation will fail at GCM tag verification.
+
+**Dual-Defense CSRF Bypass Fix:**
+
+V5.3.0 contained a logical defect (`&&` instead of `||`) that allowed validation to pass if only one of two security tokens was valid. V6.0.0 enforces a strict handshake requiring both tokens to be valid independently — WordPress Nonce and the stateless hourly-rotating HMAC-SHA256 token.
+
+**Volatile RAM Decryption & XSS Hardening:**
+
+V5.3.0 used direct PHP output and weak JS DOM assignment. V6.0.0 decrypts exclusively in the web server's volatile RAM on demand. Admin panel JS output is wrapped in a systemic `escapeHtml()` layer to neutralize script injections from manipulated database fields.
+
+#### 3. Live Builder Engine & Design Control
+
+**Drag-and-Drop Editor:**
+
+V5.3.0 had no administrative configuration UI. V6.0.0 ships a three-panel workspace layout — module palette (left), real-time preview canvas (center), properties and style sidebar (right).
+
+**Inline Editing & CSS Custom Properties:**
+
+V5.3.0 used static styles. V6.0.0 supports direct text editing via `contenteditable="true"` on canvas elements. Design changes — including theme switches like Clean Light or Cyberpunk — render instantly via CSS Custom Properties (`--vgt-radius`, `--vgt-padding`, `--vgt-width`, `--vgt-gold`).
+
+**Element-Level Text Color Selection:**
+
+V5.3.0 had no selective color control. V6.0.0 reads and normalizes font colors from selected canvas elements using an off-screen canvas engine. Values are surfaced in standardized hex format (`#rrggbb`) and are individually configurable per element type: Title, Subtitle, Labels, Headings, and Paragraphs.
+
+#### 4. Funnel Functionality (Multi-Step Flow)
+
+**Funnel Modules (`step_break`):**
+
+V5.3.0 had no multi-step capability — single-page data submission only. V6.0.0 introduces form segmentation into logical steps with a state-driven progress bar, per-step client-side validation, and smooth UI transitions between funnel stages.
+
+---
+
+## 📋 Changelog — V5.3.0 *(Legacy)*
+
+> **V5.3.0 was an architectural overhaul.** Monolith decomposed into isolated kernel modules, dual-vector IP forensics at database level, and automated regression tests.
 
 | Area | V5.2.1 | V5.3.0 |
 |---|---|---|
@@ -48,8 +99,6 @@ Found a vulnerability or have an improvement? **Open an issue or contact us.**
 
 ---
 
-
-
 ## 🔐 What is VGT Omega Vault?
 
 The WordPress ecosystem has **58,000+ form plugins.**
@@ -57,7 +106,7 @@ Not a single one encrypts data before writing it to the database.
 
 **VGT Omega Vault closes this gap.**
 
-A cryptographic data vault that **immediately encrypts every incoming record with AES-256-GCM** before it ever touches the database. Plaintext exists exclusively in RAM — for milliseconds — and nowhere else.
+A cryptographic data vault and **Drag-and-Drop form builder** that **immediately encrypts every incoming record with AES-256-GCM** before it ever touches the database. Plaintext exists exclusively in RAM — for milliseconds — and nowhere else.
 
 Built for **law firms, medical practices, tax advisors, and anyone receiving confidential inquiries through WordPress** while maintaining full GDPR compliance.
 
@@ -79,28 +128,31 @@ VGT Omega Vault:
 
 ---
 
-## 🏛️ Architecture — The Four Kernels *(Modularized V5.3.0)*
+## 🏛️ Architecture — The Four Kernels *(V6.0.0)*
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   VGT OMEGA PROTOCOL                     │
-├──────────────┬──────────────┬──────────────┬────────────┤
-│   CRYPTO     │      DB      │     API      │  FRONTEND  │
-│   KERNEL     │    KERNEL    │    KERNEL    │   KERNEL   │
-│              │              │              │            │
-│ AES-256-GCM  │  Abstracted  │  Dual CSRF   │  Shortcode │
-│ GCM Auth Tag │  Pagination  │  Rate Limit  │  Generator │
-│ Random IV    │  Dual-Vector │  Honeypot    │  Gold UI   │
-│ Auto-Upgrade │  IP Storage  │  Zero-Trust  │  AJAX      │
-│ 3-Tier Keys  │  Platinum UI │  IP Profiler │            │
-└──────────────┴──────────────┴──────────────┴────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    VGT OMEGA PROTOCOL V6                      │
+├──────────────┬──────────────┬──────────────┬─────────────────┤
+│   CRYPTO     │      DB      │     API      │  FRONTEND       │
+│   KERNEL     │    KERNEL    │    KERNEL    │   KERNEL        │
+│              │              │              │                 │
+│ AES-256-GCM  │  3 Tables    │  Dual CSRF   │  Drag-and-Drop  │
+│ Form-Bound   │  Form Store  │  (Fixed)     │  Live Builder   │
+│ AAD Binding  │  Submission  │  Rate Limit  │  Multi-Step     │
+│ GCM Auth Tag │  Store       │  Honeypot    │  Funnel Engine  │
+│ Random IV    │  Dual-Vector │  Zero-Trust  │  CSS Custom     │
+│ Auto-Upgrade │  IP Storage  │  IP Profiler │  Properties     │
+│ 3-Tier Keys  │  Pagination  │              │  Inline Edit    │
+└──────────────┴──────────────┴──────────────┴─────────────────┘
 
-V5.3.0 Module Layout (includes/):
-  VGT_Omega_Crypto    ← AES-256-GCM + key validity — isolated
-  VGT_Omega_DB        ← pure data abstraction layer
-  VGT_Omega_API       ← firewall + validation pipeline + IP profiler
-  VGT_Omega_Frontend  ← client-side rendering engine
-  VGT_Omega_UI        ← admin-side rendering engine (strictly separated)
+V6.0.0 Module Layout (includes/):
+  VGT_Omega_Crypto    ← AES-256-GCM + form-bound AAD + 3-tier key engine
+  VGT_Omega_DB        ← 3-table data abstraction + dual-vector IP + pagination
+  VGT_Omega_API       ← firewall + fixed dual-CSRF + validation pipeline + IP profiler
+  VGT_Omega_Frontend  ← client-side rendering engine + funnel step controller
+  VGT_Omega_UI        ← admin rendering engine + drag-and-drop live builder
+  VGT_Omega_Builder   ← form/funnel composition engine + CSS custom properties
 ```
 
 ---
@@ -111,12 +163,17 @@ The cryptographic core. Every data element is encrypted with **AES-256-GCM** —
 
 ```php
 // Encryption: Data → Ciphertext (stored in DB)
-VGT_Omega_Crypto::encrypt($sensitive_data);
+// V6.0.0: AAD = $context | Domain | Form_ID
+VGT_Omega_Crypto::encrypt($sensitive_data, $context, $form_id);
 
 // Decryption: Ciphertext → Plaintext (RAM only)
-// V5.2.0: Auto-Upgrade Engine applied transparently on read
-VGT_Omega_Crypto::decrypt($ciphertext);
+// Auto-Upgrade Engine applied transparently on read
+VGT_Omega_Crypto::decrypt($ciphertext, $context, $form_id);
 ```
+
+**Form-Bound AAD Binding (V6.0.0):**
+
+Every ciphertext is cryptographically bound to its originating form instance. A payload encrypted by Form A cannot be decrypted in the context of Form B — GCM tag verification will fail. This eliminates cross-form injection vectors that existed in V5.3.0 where AAD was bound to domain and type only.
 
 **Key Management:**
 - 512-bit entropy during key generation (`random_bytes(64)`)
@@ -126,14 +183,14 @@ VGT_Omega_Crypto::decrypt($ciphertext);
 
 ---
 
-## 🔄 Live Decrypt-and-Auto-Upgrade Engine *(New in V5.2.0)*
+## 🔄 Live Decrypt-and-Auto-Upgrade Engine *(V5.2.0+, retained in V6.0.0)*
 
-Key rotations and encryption upgrades no longer require downtime or manual data migration. The engine resolves every decryption request through a three-tier fallback cascade — and re-encrypts stale records transparently on the way out.
+Key rotations and encryption upgrades require no downtime or manual migration. The engine resolves every decryption request through a three-tier fallback cascade — re-encrypting stale records transparently on read.
 
 ```
 Decryption Request Received
          ↓
-Tier 1: Supreme Key + Domain Lock
+Tier 1: Supreme Key + Domain Lock + Form_ID (V6.0.0)
   → Success: record re-encrypted with current key → DB write → return plaintext
   → Fail: proceed to Tier 2
          ↓
@@ -146,90 +203,73 @@ Tier 3: Legacy Key
   → Fail: decryption error — record flagged
 ```
 
-**What this means in practice:**
-- Migrate from old encryption key to new one — zero downtime, zero manual steps
-- Records self-upgrade on first access — no batch migration scripts
-- Domain migration (key domain lock changes) — handled transparently
-- Re-encryption happens in RAM — ciphertext in DB is always current-generation after read
-
 ---
 
 ## 🛡️ API Kernel (`VGT_Omega_API`)
 
-Multi-layered defense for every incoming request — **V5.2.0 adds Dual-Defense CSRF and hardened IP resolution.**
+Multi-layered defense for every incoming request. **V6.0.0 fixes the Dual-Defense CSRF bypass vulnerability present in V5.3.0.**
 
 ```
 Layer 1:  Method Guard              → POST only
 Layer 2a: CSRF — WP Nonce           → wp_verify_nonce() (session-bound)
 Layer 2b: CSRF — Rotating Token     → stateless, hour+salt bound (cache-immune)
+          ↑ V6.0.0: Both layers now strictly required (|| → && fix)
 Layer 3:  Rate Limiting             → 60s cooldown per IP
 Layer 4:  Honeypot Detection        → bot trap field
-Layer 5:  IP Validation             → hardened proxy evaluator (see below)
+Layer 5:  IP Validation             → hardened proxy evaluator
 Layer 6:  Email Validation          → Regex + is_email()
 Layer 7:  Domain Validation         → Regex pattern
 Layer 8:  Vector Validation         → whitelist pattern
 Layer 9:  Injection Guard           → [<>{}\[\]\=] blocked
-Layer 10: AES-256-GCM               → encryption
-Layer 11: DB Write                  → ciphertext only
+Layer 10: Form-Bound AAD Binding    → context | domain | form_id (V6.0.0)
+Layer 11: AES-256-GCM               → encryption
+Layer 12: DB Write                  → ciphertext only
 ```
 
-### Dual-Defense CSRF-Shield *(New in V5.2.0)*
+### Dual-Defense CSRF-Shield *(Fixed in V6.0.0)*
 
-Standard WordPress nonces fail silently on cached pages — the nonce is baked into the page at cache time and expires before the user submits the form. VGT Omega Vault now operates a **second, independent CSRF layer** that does not rely on session state:
+V5.3.0 contained a logical defect where a `&&` condition meant only one of the two CSRF tokens needed to be valid for the request to proceed. V6.0.0 corrects this: both layers must independently pass.
 
 ```
 Standard Nonce:
   Generated at page render → expires after 12-24h
-  Cached page served 3h later → nonce still in HTML → ✅ valid
-  Cached page served 25h later → nonce expired → ❌ CSRF false-positive
+  Cache-immune via rotating stateless token as second layer
 
-Rotating Stateless Token (V5.2.0):
+Rotating Stateless Token:
   Token = HMAC(current_hour + site_salt)
   Valid: current hour + previous hour window
   No session required → cache-immune
-  No replay window beyond 2 hours
+
+V5.3.0 (BROKEN):  if (nonce_valid || token_valid) → accept
+V6.0.0 (FIXED):   if (nonce_valid && token_valid) → accept
 ```
 
-Both layers must pass independently. Bypassing one does not bypass the other.
-
-### IP-Spoofing & Zero-Trust Proxy Protocol *(V5.2.0 → V5.2.1 → V5.3.0)*
-
-V5.2.0 introduced a hardened proxy evaluator. V5.2.1 added Cloudflare CIDR validation. **V5.3.0 changes the default trust model entirely** — proxy header evaluation is now opt-in, not opt-out:
+### IP-Spoofing & Zero-Trust Proxy Protocol *(V5.3.0, retained)*
 
 ```
-V5.3.0 Zero-Trust Default (vgt_omega_allow_proxies = false):
+Zero-Trust Default (vgt_omega_allow_proxies = false):
   → ALL proxy headers ignored (X-Forwarded-For, CF-Connecting-IP, X-Real-IP)
   → ip_socket = REMOTE_ADDR always
   → ip_claimed = empty
-  → Rate limiting and IP logging always use the real TCP socket
-  → No spoofing vector exists — there is no header to manipulate
 
-V5.3.0 Proxy Opt-In (vgt_omega_allow_proxies = true):
-  → Admin explicitly enables proxy header evaluation
-  → Cloudflare CIDR validation active (V5.2.1 logic retained)
+Proxy Opt-In (vgt_omega_allow_proxies = true):
+  → Cloudflare CIDR validation active
   → Private ranges filtered via FILTER_FLAG_NO_PRIV_RANGE
   → ip_claimed populated from validated header value
   → ip_socket always retained as ground truth
 ```
 
-```
-Evaluation Chain (Opt-In mode):
-  1. Is REMOTE_ADDR in Cloudflare IPv4/IPv6 CIDR list?
-     → YES: read CF-Connecting-IP → ip_claimed
-     → NO:  CF-Connecting-IP ignored
-  2. Trusted reverse proxy? → read X-Real-IP → ip_claimed
-  3. Fallback: ip_claimed = empty, ip_socket used for all decisions
-
-Header-Injection Guard (active in both modes):
-  Multi-IP X-Forwarded-For → first valid IP extracted
-  Private ranges → filtered (FILTER_FLAG_NO_PRIV_RANGE | NO_RES_RANGE)
-  Non-IP header values → blocked, REMOTE_ADDR used
-  Header > 45 chars → blocked immediately
-```
-
 ---
 
 ## 🗄️ Database Kernel (`VGT_Omega_DB`)
+
+**V6.0.0 — Three-Table Architecture:**
+
+```
+wp_vgt_omega_audits      ← legacy audit log (backward-compatible)
+wp_vgt_omega_forms       ← form/funnel definitions and builder state
+wp_vgt_omega_submissions ← encrypted submission payloads (per form instance)
+```
 
 ```
 Stored in DB:               What attackers see:
@@ -238,48 +278,70 @@ Stored in DB:               What attackers see:
   vector    → Ciphertext      Wq6tR1uYcEiOx...
   threat    → Ciphertext      Bs5aG0ePzHlVn...
   ip_socket → Ciphertext      Tx2jM7yKdCfUw...   ← REMOTE_ADDR (unforgeable)
-  ip_claimed→ Ciphertext      Rx9nP2qVsHlKe...   ← header-submitted IP (V5.3.0)
+  ip_claimed→ Ciphertext      Rx9nP2qVsHlKe...   ← header-submitted IP
+  form_id   → bound in AAD   (no standalone column — baked into ciphertext)
 ```
 
-Even with full database access, all data remains **cryptographically worthless.**
-
-**V5.3.0 — Dual-Vector IP Forensics:**
-
-V5.2.1 stored a single `ip_origin` column that merged socket and claimed IP into one value — making it impossible post-write to distinguish whether a stored IP was the real TCP connection or a spoofed header value.
-
-V5.3.0 separates them physically:
-
-```
-ip_socket  = REMOTE_ADDR
-             → The actual TCP connection endpoint
-             → Unforgeable at network level
-             → Always written, regardless of proxy settings
-
-ip_claimed = X-Forwarded-For / CF-Connecting-IP (after CIDR validation)
-             → What the client claims to be
-             → Only populated when vgt_omega_allow_proxies = true
-             → Empty in Zero-Trust default mode
-```
-
-This enables forensic reconstruction: even after an attack, the database distinguishes between "what IP connected" and "what IP was claimed."
-
-**V5.2.1 — Column Type Optimization (retained):**
-`domain`, `email`, `vector`, and both IP columns use `varchar(...)` — full MySQL index support, InnoDB buffer pool resident. The encrypted payload column `threat` remains `text`.
+Even with full database access, all submission data remains **cryptographically worthless.**
 
 ---
 
 ## 🎨 Frontend & Admin Kernel
 
 **Frontend — Shortcode Deployment:**
-```
-[vgt_omega_comlink]
-```
-Single shortcode deploys the complete encrypted form — Gold/Dark design, loading states, AJAX transmission, Dual-Defense CSRF tokens injected automatically.
 
-**Admin Vault Dashboard — V5.2.0 Upgrades:**
-- **Secure Pagination:** Platinum-design paginated navigation — no full table loads on large datasets
-- **Lückenloses Escaping:** All output via context-specific escaping: `esc_html()` for text, `esc_url()` for links, `esc_attr()` for attributes — no raw variable output anywhere
-- **On-the-fly Decryption:** Auto-Upgrade Engine fires transparently on record read — dashboard always displays current-generation data
+```
+[vgt_omega_form id="X"]         ← V6.0.0 instanced shortcode
+[vgt_omega_comlink]              ← legacy alias (backward-compatible)
+```
+
+**Live Builder (V6.0.0):**
+
+```
+┌─────────────┬─────────────────────────┬─────────────────┐
+│   MODULES   │      CANVAS (Live)      │   PROPERTIES    │
+│             │                         │                 │
+│  Text       │  [Title]                │  --vgt-radius   │
+│  Email      │  [Email Field    ]      │  --vgt-padding  │
+│  Number     │  [Select ▼       ]      │  --vgt-width    │
+│  Textarea   │  ──── step_break ────   │  --vgt-gold     │
+│  Select     │  [Next Step →    ]      │                 │
+│  Radio      │                         │  Theme:         │
+│  File       │  Drag to reorder        │  ○ Clean Light  │
+│  Heading    │  Click to edit inline   │  ● Cyberpunk    │
+│  Paragraph  │  contenteditable="true" │                 │
+│  Image      │                         │  Colors:        │
+│  Video      │                         │  Title  #f0c040 │
+│  step_break │                         │  Labels #ffffff │
+└─────────────┴─────────────────────────┴─────────────────┘
+```
+
+**XSS Hardening (V6.0.0):**
+All admin panel JS output passes through `escapeHtml()` before DOM insertion. Manipulated database fields cannot inject scripts through the Vault dashboard.
+
+**Admin Vault Dashboard:**
+- Secure Pagination — Platinum-design paginated navigation
+- On-the-fly Decryption — Auto-Upgrade Engine fires transparently on record read
+- Per-form submission view with dual-vector IP forensics
+
+---
+
+## 🔀 Funnel Engine — Multi-Step Forms *(New in V6.0.0)*
+
+```
+Single-Page Form (V5.3.0):        Multi-Step Funnel (V6.0.0):
+  [Field 1]                          Step 1           Step 2           Step 3
+  [Field 2]                          [Field 1]   →    [Field 3]   →    [Field 5]
+  [Field 3]                          [Field 2]        [Field 4]        [Submit]
+  [Field 4]                          [Next →]         [Next →]
+  [Submit]
+```
+
+- `step_break` module segments forms into logical steps
+- State-driven progress bar reflects current step
+- Per-step client-side validation before proceeding
+- Smooth UI transitions between funnel stages
+- Full AES-256-GCM encryption applied at final submission
 
 ---
 
@@ -293,16 +355,19 @@ STANDARD PLUGIN:
        ↓
   Attacker dumps DB → all data compromised ❌
 
-VGT OMEGA VAULT:
-  User submits form
+VGT OMEGA VAULT V6.0.0:
+  User submits form (single-page or multi-step funnel)
        ↓
-  RAM: Validation + Dual CSRF + IP Verification + Encryption (milliseconds)
+  RAM: Validation + Fixed Dual CSRF + IP Verification
+       + Form-Bound AAD Binding + AES-256-GCM Encryption (milliseconds)
        ↓
-  Ciphertext → MySQL Database
+  Ciphertext → MySQL Database (form-instance locked)
        ↓
   Attacker dumps DB → ciphertext only → worthless ✅
+  Cross-form injection attempt → GCM tag mismatch → fail ✅
        ↓
   Admin opens Vault → Auto-Upgrade Engine fires → decryption in RAM
+  + escapeHtml() wraps all DOM output
        ↓
   Plaintext never leaves memory
 ```
@@ -311,22 +376,31 @@ VGT OMEGA VAULT:
 
 ## 📊 Security Features
 
-| Feature | Standard Plugin | VGT Omega Vault |
-|---|---|---|
-| Database encryption | ❌ | ✅ AES-256-GCM |
-| Zero Disk State | ❌ | ✅ RAM-only decryption |
-| GCM Authentication Tag | ❌ | ✅ Tamper detection |
-| CSRF — WP Nonce | partial | ✅ `wp_verify_nonce` |
-| CSRF — Cache-immune rotating token | ❌ | ✅ Stateless HMAC (V5.2.0) |
-| IP Spoofing protection | ❌ | ✅ Hardened proxy evaluator (V5.2.0) |
-| Rate Limiting | ❌ | ✅ 60s cooldown per real IP |
-| Honeypot Bot Detection | ❌ | ✅ |
-| Injection Guard | partial | ✅ 11 layers |
-| Key migration — zero downtime | ❌ | ✅ Auto-Upgrade Engine (V5.2.0) |
-| Context-specific output escaping | ❌ | ✅ `esc_html` / `esc_url` / `esc_attr` (V5.2.0) |
-| Key file protection | ❌ | ✅ `.htaccess` + `chmod 0600` |
-| Paginated Admin Vault | ❌ | ✅ Platinum design (V5.2.0) |
-| GDPR compliant by design | ❌ | ✅ |
+| Feature | Standard Plugin | V5.3.0 | V6.0.0 |
+|---|---|---|---|
+| Database encryption | ❌ | ✅ AES-256-GCM | ✅ AES-256-GCM |
+| Zero Disk State | ❌ | ✅ | ✅ |
+| GCM Authentication Tag | ❌ | ✅ | ✅ |
+| Form-Bound AAD Binding | ❌ | ❌ | ✅ form_id in AAD |
+| CSRF — WP Nonce | partial | ✅ | ✅ |
+| CSRF — Cache-immune rotating token | ❌ | ✅ | ✅ |
+| CSRF — Both tokens strictly required | ❌ | ❌ (logic defect) | ✅ fixed |
+| IP Spoofing protection | ❌ | ✅ | ✅ |
+| Zero-Trust proxy default | ❌ | ✅ | ✅ |
+| Rate Limiting | ❌ | ✅ 60s per real IP | ✅ |
+| Honeypot Bot Detection | ❌ | ✅ | ✅ |
+| Injection Guard | partial | ✅ 11 layers | ✅ 12 layers |
+| Key migration — zero downtime | ❌ | ✅ Auto-Upgrade | ✅ |
+| XSS hardening in admin panel | ❌ | partial | ✅ escapeHtml() |
+| Key file protection | ❌ | ✅ | ✅ |
+| Paginated Admin Vault | ❌ | ✅ Platinum design | ✅ per-form view |
+| GDPR compliant by design | ❌ | ✅ | ✅ |
+| Drag-and-Drop form builder | ❌ | ❌ | ✅ |
+| Multi-step funnel engine | ❌ | ❌ | ✅ step_break |
+| Dynamic field types | ❌ | ❌ | ✅ 11 types |
+| CSS Custom Properties theming | ❌ | ❌ | ✅ |
+| Inline canvas editing | ❌ | ❌ | ✅ |
+| Element-level color control | ❌ | ❌ | ✅ off-screen engine |
 
 ---
 
@@ -349,48 +423,27 @@ WordPress Admin → Plugins → Upload Plugin → Select ZIP → Install
 
 **2. Activate plugin:**
 ```
-Database table created automatically.
+Three database tables created automatically.
 Cryptographic key generated automatically.
-Dual-Defense CSRF tokens initialized automatically.
+Fixed Dual-Defense CSRF tokens initialized automatically.
 ```
 
-**3. Deploy form:**
+**3. Build your form:**
 ```
-[vgt_omega_comlink]
+WordPress Admin → VGT Vault → Form Builder → New Form
+Drag fields onto the canvas. Add step_break for multi-step funnels.
 ```
 
-**4. Open vault:**
+**4. Deploy form:**
 ```
-WordPress Admin → VGT Vault
+[vgt_omega_form id="1"]
+[vgt_omega_comlink]              ← legacy shortcode still works
+```
+
+**5. Open vault:**
+```
+WordPress Admin → VGT Vault → Submissions
 Records decrypted on-the-fly. Auto-Upgrade Engine fires transparently.
-```
-
----
-
-## 🎯 Who Is This For?
-
-```
-⚖️  Law Firms            → client inquiries encrypted
-🏥  Medical Practices    → patient requests GDPR-compliant
-📊  Tax Advisors         → client data secured
-🏛️  Notaries             → confidential requests protected
-🔐  Security Teams       → vulnerability disclosure forms
-🏢  Enterprises          → any confidential inquiry workflow
-```
-
----
-
-## 🆚 Market Comparison
-
-```
-Gravity Forms  ($259/year):  No encryption. Plaintext in DB.
-WPForms Pro    ($199/year):  No encryption. Plaintext in DB.
-Ninja Forms    ($99/year):   No encryption. Plaintext in DB.
-Formidable     ($199/year):  No encryption. Plaintext in DB.
-
-VGT Omega Vault (free):      AES-256-GCM. Zero Disk State.
-                              Dual-Defense CSRF. Cache-immune.
-                              GDPR-compliant by design.
 ```
 
 ---
@@ -399,51 +452,80 @@ VGT Omega Vault (free):      AES-256-GCM. Zero Disk State.
 
 ```
 vgt-omega-vault/
-├── vgt-omega-vault.php          ← bootstrapper + lifecycle hooks
+├── vgt-omega-vault.php              ← bootstrapper + lifecycle hooks
 │
-├── includes/                    ← modular kernel directory (V5.3.0)
-│   ├── class-vgt-omega-crypto.php   ← AES-256-GCM + 3-tier key engine
-│   ├── class-vgt-omega-db.php       ← data abstraction + dual-vector IP + pagination
-│   ├── class-vgt-omega-api.php      ← firewall + validation pipeline + IP profiler
-│   ├── class-vgt-omega-frontend.php ← client-side rendering engine
-│   └── class-vgt-omega-ui.php       ← admin rendering engine (strictly separated)
+├── includes/                        ← modular kernel directory
+│   ├── class-vgt-omega-crypto.php   ← AES-256-GCM + form-bound AAD + 3-tier key engine
+│   ├── class-vgt-omega-db.php       ← 3-table abstraction + dual-vector IP + pagination
+│   ├── class-vgt-omega-api.php      ← firewall + fixed dual-CSRF + validation pipeline
+│   ├── class-vgt-omega-frontend.php ← client-side rendering + funnel step controller
+│   ├── class-vgt-omega-ui.php       ← admin rendering + vault dashboard (strictly separated)
+│   └── class-vgt-omega-builder.php  ← drag-and-drop builder + CSS custom properties engine
 │
 ├── assets/
-│   ├── vgt-omega.js             ← AJAX + CSRF token injection (decoupled)
-│   └── vgt-omega.css            ← Platinum/Gold UI styles (decoupled)
+│   ├── vgt-omega.js                 ← AJAX + CSRF token injection + funnel state machine
+│   ├── vgt-omega-builder.js         ← live builder engine + inline editing + color picker
+│   └── vgt-omega.css                ← Platinum/Gold UI + CSS custom properties
 │
-├── phpunit1.php                 ← standalone regression tests (V5.3.0)
+├── phpunit1.php                     ← standalone regression tests (V5.3.0+)
 │
 └── Auto-generated:
     └── wp-content/uploads/vgt_keys/
-        ├── .htaccess                ← direct access blocked
+        ├── .htaccess                ← direct access blocked (Apache 2.4+)
         ├── index.php                ← zero-space guard
         └── .vgt_core_secret.php     ← AES key (chmod 0600)
 ```
 
 ---
 
-## 🧪 Automated Regression Tests *(New in V5.3.0)*
+## 🎯 Who Is This For?
 
-V5.2.1 had no automated tests — changes required manual validation in a full WordPress environment. V5.3.0 ships `phpunit1.php`: a standalone regression suite that tests core IP parsing logic without loading WordPress.
+```
+⚖️  Law Firms            → encrypted client inquiries via custom funnels
+🏥  Medical Practices    → patient request forms — GDPR-compliant by design
+📊  Tax Advisors         → confidential client intake — AES-256-GCM protected
+🏛️  Notaries             → multi-step disclosure forms with funnel segmentation
+🔐  Security Teams       → encrypted vulnerability disclosure workflows
+🏢  Enterprises          → any confidential inquiry pipeline — drag-and-drop deployment
+```
+
+---
+
+## 🆚 Market Comparison
+
+```
+Gravity Forms  ($259/year):  No encryption. Plaintext in DB. No funnel builder included.
+WPForms Pro    ($199/year):  No encryption. Plaintext in DB.
+Ninja Forms    ($99/year):   No encryption. Plaintext in DB.
+Formidable     ($199/year):  No encryption. Plaintext in DB.
+
+VGT Omega Vault (free):      AES-256-GCM. Form-Bound AAD. Zero Disk State.
+                              Fixed Dual-Defense CSRF. Cache-immune.
+                              Drag-and-Drop Builder. Multi-Step Funnel Engine.
+                              11 Field Types. CSS Custom Properties Theming.
+                              GDPR-compliant by design.
+```
+
+---
+
+## 🧪 Automated Regression Tests *(V5.3.0+)*
+
+`phpunit1.php` is a standalone regression suite covering core IP parsing and crypto logic — no WordPress environment required.
 
 ```bash
-# Run standalone — no WordPress installation required
 php phpunit1.php
-
-# Or via PHPUnit if installed
 ./vendor/bin/phpunit phpunit1.php
 ```
 
 **Test coverage includes:**
 - IP chain parsing from `X-Forwarded-For` multi-value headers
-- Private IPv4 range filtering (`10.x`, `192.168.x`, `172.16.x`)
-- Private IPv6 range filtering (`::1`, `fc00::/7`)
+- Private IPv4/IPv6 range filtering
 - Cloudflare CIDR validation (`is_cloudflare_ip()`)
 - Dual-vector socket/claimed IP separation logic
-- Edge cases: empty headers, malformed values, oversized strings
+- Form-bound AAD binding integrity (V6.0.0)
+- Dual-CSRF strict handshake validation (V6.0.0)
 
-Suitable for CI/CD pipeline integration — add to GitHub Actions or any runner without a WordPress environment dependency.
+Suitable for CI/CD pipeline integration — no WordPress environment dependency.
 
 ---
 
@@ -456,17 +538,16 @@ The cryptographic key is generated once on activation.
 Back it up before any server migration:
   wp-content/uploads/vgt_keys/.vgt_core_secret.php
 
-V5.2.0 Auto-Upgrade Engine:
-  Key migration between encryption generations is handled automatically.
-  Manual data re-encryption scripts are no longer required.
-  Records upgrade to the current key on first read — silently, in RAM.
+V6.0.0 Migration from V5.3.0:
+  The database schema expands automatically on activation (3 tables).
+  Legacy submissions in wp_vgt_omega_audits remain accessible.
+  The Auto-Upgrade Engine handles key transitions transparently on read.
+  The legacy shortcode [vgt_omega_comlink] is mapped automatically.
 
-V5.2.1 .htaccess (Apache 2.4+ compatible):
-  The generated .htaccess uses <IfModule mod_authz_core.c> to detect
-  the Apache version and apply the correct directive:
-    Apache 2.4+:  Require all denied
-    Apache 2.2:   Deny from all (legacy fallback)
-  No server warnings or permission mismatches on modern hosting environments.
+V6.0.0 Form-Bound AAD:
+  Ciphertexts from V5.3.0 use domain-only AAD context.
+  The Auto-Upgrade Engine detects and re-encrypts legacy records with
+  form-bound AAD on first access — no manual migration required.
 ```
 
 ---
@@ -514,4 +595,6 @@ Anyone using and modifying this plugin must publish changes under AGPLv3.
 
 [![VGT](https://img.shields.io/badge/VisionGaia-Technology-gold?style=for-the-badge)](https://visiongaiatechnology.de)
 
-*VGT Omega Vault v5.3.0 — Modular Kernel Architecture // Dual-Vector IP Forensics // Zero-Trust Proxy Protocol // AES-256-GCM // Dual-Defense CSRF // Cloudflare CIDR Validation // Automated Regression Tests // GDPR-compliant by design // AGPLv3*
+*VGT Omega Vault v6.0.0 — Drag-and-Drop Form & Funnel Builder // Form-Bound AAD Binding // Dual-Defense CSRF Fix // AES-256-GCM // Zero Disk State // Multi-Step Funnel Engine // CSS Custom Properties // XSS Hardening // Zero-Trust Proxy Protocol // Cloudflare CIDR Validation // GDPR-compliant by design // AGPLv3*
+
+</div>
