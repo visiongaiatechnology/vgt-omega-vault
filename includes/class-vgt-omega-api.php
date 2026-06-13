@@ -9,12 +9,34 @@ if (!defined('ABSPATH')) {
     exit('VGT SECURE ZONE: DIRECT ACCESS FORBIDDEN');
 }
 
-class VGT_API_Exception        extends Exception {}
-class VGT_Validation_Exception extends VGT_API_Exception {} // USER-FACING: Message shown verbatim
-class VGT_Security_Exception   extends VGT_API_Exception {} // INTERNAL: Generic message to client, full detail to log
-class VGT_Storage_Exception    extends VGT_API_Exception {} // INTERNAL: Generic message to client, full detail to log
-
 final class VGT_Omega_API {
+
+    /**
+     * Verifies the request Content-Type and parses JSON if applicable, throwing a ValidationException on invalid JSON,
+     * or a SecurityException on illegal Content-Types.
+     */
+    private static function validate_content_type_and_parse_body(): array {
+        $content_type = $_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '';
+        
+        if (stripos($content_type, 'application/json') !== false) {
+            try {
+                $body = file_get_contents('php://input');
+                return json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Invalid JSON payload.', 'vgt-omega-vault'));
+            }
+        }
+        
+        // Block other non-standard POST content types
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            if (stripos($content_type, 'application/x-www-form-urlencoded') === false && 
+                stripos($content_type, 'multipart/form-data') === false) {
+                throw new \VGTOmegaVault\SecurityException('Invalid Content-Type header: ' . $content_type);
+            }
+        }
+        
+        return $_POST;
+    }
 
     /**
      * Generiert ein unmanipulierbares, strukturiertes IP-Profil.
@@ -92,19 +114,23 @@ final class VGT_Omega_API {
     }
 
     public static function handle_request(): void {
-        try {
-            self::execute_security_handshake();
+        $response = \VGTOmegaVault\CoreEngine::getInstance()->execute(static function() {
+            // Validate Content-Type and read request data
+            $post_data = self::validate_content_type_and_parse_body();
+            
+            // Execute Access Control & Routing Security Checks
+            self::execute_security_handshake($post_data);
             
             $ip_profile = self::get_ip_profile();
             self::enforce_rate_limit($ip_profile->socket);
             
             // Bot-Detection: Honeypot
-            if (!empty($_POST['vgt_full_name'])) {
-                throw new VGT_Security_Exception('Bot anomaly detected via honeypot.');
+            if (isset($post_data['vgt_full_name']) && $post_data['vgt_full_name'] !== '') {
+                throw new \VGTOmegaVault\SecurityException('Bot anomaly detected via honeypot.');
             }
 
             // Input Validation Pipeline
-            $data = self::validate_payload_integrity();
+            $data = self::validate_payload_integrity($post_data);
 
             // Cryptographic Wrapping
             $payload = [
@@ -117,67 +143,86 @@ final class VGT_Omega_API {
             ];
 
             if (!VGT_Omega_DB::insert($payload)) {
-                throw new VGT_Storage_Exception('Database write fault during crypto-insertion.');
+                throw new \VGTOmegaVault\StorageException('Database write fault during crypto-insertion.');
             }
 
             self::dispatch_notification();
-            wp_send_json_success(['message' => esc_html__('Übertragung abgeschlossen. Daten gesichert.', 'vgt-omega-vault')]);
+            return esc_html__('Übertragung abgeschlossen. Daten gesichert.', 'vgt-omega-vault');
+        });
 
-        } catch (VGT_Validation_Exception $e) {
-            wp_send_json_error(['message' => $e->getMessage()], 400);
-        } catch (VGT_Security_Exception $e) {
-            error_log('[VGT_SEC] ' . $e->getMessage());
-            wp_send_json_error(['message' => esc_html__('Anfrage aus Sicherheitsgründen abgelehnt.', 'vgt-omega-vault')], 403);
-        } catch (VGT_Storage_Exception $e) {
-            error_log('[VGT_STORAGE] ' . $e->getMessage());
-            wp_send_json_error(['message' => esc_html__('Ein Systemfehler ist aufgetreten.', 'vgt-omega-vault')], 500);
-        } catch (Throwable $e) {
-            error_log('[VGT_FATAL] ' . $e->getMessage());
-            wp_send_json_error(['message' => esc_html__('Kritischer Systemfehler.', 'vgt-omega-vault')], 500);
+        if ($response['status'] === 'success') {
+            wp_send_json_success(['message' => $response['data']]);
+        } else {
+            $code = 500;
+            if ($response['message'] === 'Request rejected for security reasons.') {
+                $code = 403;
+            } elseif (strpos($response['message'], 'erforderlich') !== false || 
+                      strpos($response['message'], 'Syntax-Fehler') !== false || 
+                      strpos($response['message'], 'Zielformat') !== false || 
+                      strpos($response['message'], 'warten') !== false) {
+                $code = 400;
+            }
+            wp_send_json_error(['message' => $response['message']], $code);
         }
     }
 
-    private static function execute_security_handshake(): void {
+    private static function execute_security_handshake(?array $post_data = null): void {
+        $data = $post_data ?: $_POST;
+        
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            throw new VGT_Security_Exception('Invalid request method: ' . $_SERVER['REQUEST_METHOD']);
+            throw new \VGTOmegaVault\SecurityException('Invalid request method: ' . $_SERVER['REQUEST_METHOD']);
         }
 
-        $nonce = isset($_POST['vgt_nonce']) ? sanitize_text_field($_POST['vgt_nonce']) : '';
-        $token = isset($_POST['vgt_stateless_token']) ? sanitize_text_field($_POST['vgt_stateless_token']) : '';
+        // Validate Origin Host for Cross-Origin protection
+        if (isset($_SERVER['HTTP_ORIGIN']) && is_string($_SERVER['HTTP_ORIGIN'])) {
+            $origin_host = parse_url($_SERVER['HTTP_ORIGIN'], PHP_URL_HOST);
+            $home_host = parse_url(home_url(), PHP_URL_HOST);
+            if ($origin_host !== $home_host) {
+                throw new \VGTOmegaVault\SecurityException('Unauthorized cross-origin request.');
+            }
+        }
+
+        $nonce = isset($data['vgt_nonce']) && is_string($data['vgt_nonce']) ? sanitize_text_field($data['vgt_nonce']) : '';
+        $token = isset($data['vgt_stateless_token']) && is_string($data['vgt_stateless_token']) ? sanitize_text_field($data['vgt_stateless_token']) : '';
 
         $nonce_valid = wp_verify_nonce($nonce, 'vgt_omega_comlink_action');
         $token_valid = self::verify_stateless_token($token);
 
         if (!$nonce_valid || !$token_valid) {
-            throw new VGT_Security_Exception('CSRF/Token validation failed.');
+            throw new \VGTOmegaVault\SecurityException('CSRF/Token validation failed.');
         }
     }
 
     private static function enforce_rate_limit(string $socket_ip): void {
-        $rate_limit_key = 'vgt_rl_' . md5($socket_ip);
-        if (get_transient($rate_limit_key)) {
-            throw new VGT_Validation_Exception(esc_html__('Rate-Limit erreicht. Bitte warten.', 'vgt-omega-vault'));
+        $rate_limit_key = 'vgt_rl_count_' . md5($socket_ip);
+        $count = (int)get_transient($rate_limit_key);
+        
+        // Allow up to 5 requests per 30 seconds
+        if ($count >= 5) {
+            throw new \VGTOmegaVault\ValidationException(esc_html__('Rate-Limit erreicht. Bitte warten Sie 30 Sekunden.', 'vgt-omega-vault'));
         }
-        set_transient($rate_limit_key, true, 60);
+        
+        set_transient($rate_limit_key, $count + 1, 30);
     }
 
-    private static function validate_payload_integrity(): array {
-        $raw_domain = isset($_POST['vgt_domain']) ? trim((string)wp_unslash($_POST['vgt_domain'])) : '';
-        $raw_email  = isset($_POST['vgt_email']) ? trim((string)wp_unslash($_POST['vgt_email'])) : '';
-        $raw_vector = isset($_POST['vgt_vector']) ? trim((string)wp_unslash($_POST['vgt_vector'])) : '';
-        $raw_threat = isset($_POST['vgt_threat']) ? trim((string)wp_unslash($_POST['vgt_threat'])) : '';
+    private static function validate_payload_integrity(?array $post_data = null): array {
+        $data = $post_data ?: $_POST;
+        $raw_domain = isset($data['vgt_domain']) && is_string($data['vgt_domain']) ? trim((string)wp_unslash($data['vgt_domain'])) : '';
+        $raw_email  = isset($data['vgt_email']) && is_string($data['vgt_email']) ? trim((string)wp_unslash($data['vgt_email'])) : '';
+        $raw_vector = isset($data['vgt_vector']) && is_string($data['vgt_vector']) ? trim((string)wp_unslash($data['vgt_vector'])) : '';
+        $raw_threat = isset($data['vgt_threat']) && is_string($data['vgt_threat']) ? trim((string)wp_unslash($data['vgt_threat'])) : '';
 
         if (!is_email($raw_email) || !preg_match('/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $raw_email)) {
-            throw new VGT_Validation_Exception(esc_html__('E-Mail Syntax-Fehler.', 'vgt-omega-vault'));
+            throw new \VGTOmegaVault\ValidationException(esc_html__('E-Mail Syntax-Fehler.', 'vgt-omega-vault'));
         }
 
         $domain_regex = '/^(?:https?:\/\/)?(?:[a-zA-Z0-9\-]+\.)+[a-zA-Z]{2,}(?:\/\S*)?$|^(?:https?:\/\/)?(?:\d{1,3}\.){3}(?:\d{1,3}|XXX|xxx)(?:\/\d{1,2})?$/i';
         if (!preg_match($domain_regex, $raw_domain)) {
-            throw new VGT_Validation_Exception(esc_html__('Ungültiges Zielformat (Domain/IP).', 'vgt-omega-vault'));
+            throw new \VGTOmegaVault\ValidationException(esc_html__('Ungültiges Zielformat (Domain/IP).', 'vgt-omega-vault'));
         }
 
         if (preg_match('/[<>]/', $raw_threat)) {
-            throw new VGT_Security_Exception('HTML/Script injection attempt in threat payload.');
+            throw new \VGTOmegaVault\SecurityException('HTML/Script injection attempt in threat payload.');
         }
 
         return [
@@ -295,89 +340,147 @@ final class VGT_Omega_API {
      * ============================================================================== */
 
     public static function handle_save_form(): void {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => esc_html__('Unauthorized clearance level.', 'vgt-omega-vault')], 403);
-        }
+        $response = \VGTOmegaVault\CoreEngine::getInstance()->execute(static function() {
+            if (!current_user_can('manage_options')) {
+                throw new \VGTOmegaVault\SecurityException('Unauthorized clearance level.');
+            }
 
-        check_ajax_referer('vgt_save_config_nonce', 'security');
+            $post_data = self::validate_content_type_and_parse_body();
 
-        $form_id = isset($_POST['form_id']) ? (int)$_POST['form_id'] : 0;
-        $title = isset($_POST['title']) ? sanitize_text_field($_POST['title']) : '';
-        $type = isset($_POST['type']) && $_POST['type'] === 'funnel' ? 'funnel' : 'form';
-        $config_raw = isset($_POST['config']) ? wp_unslash($_POST['config']) : '';
+            $nonce = isset($post_data['security']) && is_string($post_data['security']) ? $post_data['security'] : '';
+            if (!wp_verify_nonce($nonce, 'vgt_save_config_nonce')) {
+                throw new \VGTOmegaVault\SecurityException('CSRF token validation failed.');
+            }
 
-        // Validate JSON configuration structure
-        json_decode($config_raw);
-        if (json_last_error() !== JSON_ERROR_NONE) {
-            wp_send_json_error(['message' => esc_html__('Invalid configuration payload format.', 'vgt-omega-vault')], 400);
-        }
+            $form_id = isset($post_data['form_id']) && !is_array($post_data['form_id']) ? (int)$post_data['form_id'] : 0;
+            $title = isset($post_data['title']) && is_string($post_data['title']) ? sanitize_text_field($post_data['title']) : '';
+            $type = isset($post_data['type']) && is_string($post_data['type']) && $post_data['type'] === 'funnel' ? 'funnel' : 'form';
+            $config_raw = isset($post_data['config']) && is_string($post_data['config']) ? wp_unslash($post_data['config']) : '';
 
-        $data = [
-            'title'  => $title,
-            'type'   => $type,
-            'config' => $config_raw
-        ];
+            // Validate JSON configuration structure with JSON_THROW_ON_ERROR
+            try {
+                json_decode($config_raw, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Invalid configuration payload format.', 'vgt-omega-vault'));
+            }
 
-        if ($form_id > 0) {
-            $success = VGT_Omega_DB::update_form($form_id, $data);
-            $inserted_id = $form_id;
-        } else {
-            $inserted_id = VGT_Omega_DB::insert_form($data);
-            $success = $inserted_id > 0;
-        }
+            $data = [
+                'title'  => $title,
+                'type'   => $type,
+                'config' => $config_raw
+            ];
 
-        if ($success) {
-            wp_send_json_success([
+            if ($form_id > 0) {
+                $success = VGT_Omega_DB::update_form($form_id, $data);
+                $inserted_id = $form_id;
+            } else {
+                $inserted_id = VGT_Omega_DB::insert_form($data);
+                $success = $inserted_id > 0;
+            }
+
+            if (!$success) {
+                throw new \VGTOmegaVault\StorageException('Failed to write form configuration to database.');
+            }
+
+            return [
                 'message' => esc_html__('Form configuration stored.', 'vgt-omega-vault'),
                 'form_id' => $inserted_id
-            ]);
+            ];
+        });
+
+        if ($response['status'] === 'success') {
+            wp_send_json_success($response['data']);
         } else {
-            wp_send_json_error(['message' => esc_html__('Failed to write form configuration to database.', 'vgt-omega-vault')], 500);
+            $code = 500;
+            if ($response['message'] === 'Request rejected for security reasons.') {
+                $code = 403;
+            } elseif (strpos($response['message'], 'Invalid') !== false) {
+                $code = 400;
+            }
+            wp_send_json_error(['message' => $response['message']], $code);
         }
     }
 
     public static function handle_delete_form(): void {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => esc_html__('Unauthorized clearance level.', 'vgt-omega-vault')], 403);
-        }
+        $response = \VGTOmegaVault\CoreEngine::getInstance()->execute(static function() {
+            if (!current_user_can('manage_options')) {
+                throw new \VGTOmegaVault\SecurityException('Unauthorized clearance level.');
+            }
 
-        check_ajax_referer('vgt_save_config_nonce', 'security');
+            $post_data = self::validate_content_type_and_parse_body();
 
-        $form_id = isset($_POST['form_id']) ? (int)$_POST['form_id'] : 0;
-        if ($form_id === 1) {
-            wp_send_json_error(['message' => esc_html__('Der System-Standard-Shortcode [vgt_omega_comlink] darf nicht gelöscht werden.', 'vgt-omega-vault')], 400);
-        }
-        if ($form_id > 0 && VGT_Omega_DB::delete_form($form_id)) {
-            wp_send_json_success(['message' => esc_html__('Form and its submissions purged.', 'vgt-omega-vault')]);
+            $nonce = isset($post_data['security']) && is_string($post_data['security']) ? $post_data['security'] : '';
+            if (!wp_verify_nonce($nonce, 'vgt_save_config_nonce')) {
+                throw new \VGTOmegaVault\SecurityException('CSRF token validation failed.');
+            }
+
+            $form_id = isset($post_data['form_id']) && !is_array($post_data['form_id']) ? (int)$post_data['form_id'] : 0;
+            if ($form_id === 1) {
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Der System-Standard-Shortcode [vgt_omega_comlink] darf nicht gelöscht werden.', 'vgt-omega-vault'));
+            }
+
+            if ($form_id > 0 && VGT_Omega_DB::delete_form($form_id)) {
+                return esc_html__('Form and its submissions purged.', 'vgt-omega-vault');
+            } else {
+                throw new \VGTOmegaVault\StorageException('Failed to purge form.');
+            }
+        });
+
+        if ($response['status'] === 'success') {
+            wp_send_json_success(['message' => $response['data']]);
         } else {
-            wp_send_json_error(['message' => esc_html__('Failed to purge form.', 'vgt-omega-vault')], 500);
+            $code = 500;
+            if ($response['message'] === 'Request rejected for security reasons.') {
+                $code = 403;
+            } elseif (strpos($response['message'], 'gelöscht') !== false) {
+                $code = 400;
+            }
+            wp_send_json_error(['message' => $response['message']], $code);
         }
     }
 
     public static function handle_submit_builder_form(): void {
-        try {
-            self::execute_security_handshake();
+        $response = \VGTOmegaVault\CoreEngine::getInstance()->execute(static function() {
+            // Content-Type validation
+            $post_data = self::validate_content_type_and_parse_body();
+            
+            // Execute Access Control & Routing Handshake
+            self::execute_security_handshake($post_data);
             
             $ip_profile = self::get_ip_profile();
             self::enforce_rate_limit($ip_profile->socket);
             
-            if (!empty($_POST['vgt_full_name'])) {
-                throw new VGT_Security_Exception('Bot anomaly detected via honeypot.');
+            if (isset($post_data['vgt_full_name']) && $post_data['vgt_full_name'] !== '') {
+                throw new \VGTOmegaVault\SecurityException('Bot anomaly detected via honeypot.');
             }
 
-            $form_id = isset($_POST['form_id']) ? (int)$_POST['form_id'] : 0;
+            $form_id = isset($post_data['form_id']) && !is_array($post_data['form_id']) ? (int)$post_data['form_id'] : 0;
             if ($form_id <= 0) {
-                throw new VGT_Validation_Exception(esc_html__('Missing target form ID.', 'vgt-omega-vault'));
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Missing target form ID.', 'vgt-omega-vault'));
             }
 
             $form = VGT_Omega_DB::get_form($form_id);
             if (!$form) {
-                throw new VGT_Validation_Exception(esc_html__('Form not found.', 'vgt-omega-vault'));
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Form not found.', 'vgt-omega-vault'));
             }
 
-            $form_config = json_decode($form->config, true);
+            try {
+                $form_config = json_decode($form->config, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Form has invalid configuration.', 'vgt-omega-vault'));
+            }
+
             if (!is_array($form_config) || empty($form_config['fields'])) {
-                throw new VGT_Validation_Exception(esc_html__('Form has no fields configured.', 'vgt-omega-vault'));
+                throw new \VGTOmegaVault\ValidationException(esc_html__('Form has no fields configured.', 'vgt-omega-vault'));
+            }
+
+            // Server-side GDPR consent check
+            $settings = $form_config['settings'] ?? [];
+            if (!empty($settings['gdpr_enabled'])) {
+                $consent = isset($post_data['vgt_gdpr_consent']) && is_string($post_data['vgt_gdpr_consent']) ? $post_data['vgt_gdpr_consent'] : '';
+                if ($consent !== '1') {
+                    throw new \VGTOmegaVault\ValidationException(esc_html__('Sie müssen der verschlüsselten Speicherung Ihrer Daten und IP-Adresse zustimmen.', 'vgt-omega-vault'));
+                }
             }
 
             // Loop through fields to extract and validate submitted parameters
@@ -390,7 +493,10 @@ final class VGT_Omega_API {
                 require_once(ABSPATH . 'wp-admin/includes/image.php');
                 
                 foreach ($_FILES as $field_name => $file_info) {
-                    if (!empty($file_info['name'])) {
+                    if (is_array($file_info) && !empty($file_info['name']) && is_string($file_info['name'])) {
+                        // Scan and sanitize the upload payload using VGT_Omega_Scanner
+                        VGT_Omega_Scanner::scan_and_sanitize($file_info);
+
                         $upload_overrides = ['test_form' => false];
                         $movefile = wp_handle_upload($file_info, $upload_overrides);
                         if ($movefile && !isset($movefile['error'])) {
@@ -400,7 +506,7 @@ final class VGT_Omega_API {
                                 'type' => 'file_upload'
                             ];
                         } else {
-                            throw new VGT_Validation_Exception('Datei-Upload fehlgeschlagen: ' . ($movefile['error'] ?? 'Unbekannter Fehler'));
+                            throw new \VGTOmegaVault\ValidationException('Datei-Upload fehlgeschlagen: ' . ($movefile['error'] ?? 'Unbekannter Fehler'));
                         }
                     }
                 }
@@ -419,28 +525,35 @@ final class VGT_Omega_API {
                 $label = $field['label'] ?? '';
                 $is_required = !empty($field['required']);
                 
-                $raw_val = isset($_POST[$field_name]) ? wp_unslash($_POST[$field_name]) : null;
+                $raw_val = isset($post_data[$field_name]) ? $post_data[$field_name] : null;
 
                 if ($is_required && ($raw_val === null || $raw_val === '')) {
-                    throw new VGT_Validation_Exception(sprintf(esc_html__('Das Feld "%s" ist erforderlich.', 'vgt-omega-vault'), esc_html($label)));
+                    throw new \VGTOmegaVault\ValidationException(sprintf(esc_html__('Das Feld "%s" ist erforderlich.', 'vgt-omega-vault'), esc_html($label)));
                 }
 
                 if ($raw_val !== null && $raw_val !== '') {
+                    // Normalize arrays to comma-separated strings to defend against PHP Warnings
+                    if (is_array($raw_val)) {
+                        $raw_val = implode(', ', array_map('sanitize_text_field', $raw_val));
+                    } else {
+                        $raw_val = (string)$raw_val;
+                    }
+
                     if ($type === 'email') {
-                        $val = trim((string)$raw_val);
+                        $val = trim($raw_val);
                         if (!is_email($val)) {
-                            throw new VGT_Validation_Exception(sprintf(esc_html__('Ungültiges E-Mail-Format im Feld "%s".', 'vgt-omega-vault'), esc_html($label)));
+                            throw new \VGTOmegaVault\ValidationException(sprintf(esc_html__('Ungültiges E-Mail-Format im Feld "%s".', 'vgt-omega-vault'), esc_html($label)));
                         }
                         $payload[$field_name] = sanitize_email($val);
                     } elseif ($type === 'textarea') {
-                        if (preg_match('/[<>]/', (string)$raw_val)) {
-                            throw new VGT_Security_Exception('Script injection attempt in dynamic payload.');
+                        if (preg_match('/[<>]/', $raw_val)) {
+                            throw new \VGTOmegaVault\SecurityException('Script injection attempt in dynamic payload.');
                         }
-                        $payload[$field_name] = sanitize_textarea_field((string)$raw_val);
+                        $payload[$field_name] = sanitize_textarea_field($raw_val);
                     } elseif ($type === 'number') {
                         $payload[$field_name] = (float)$raw_val;
                     } else {
-                        $payload[$field_name] = sanitize_text_field((string)$raw_val);
+                        $payload[$field_name] = sanitize_text_field($raw_val);
                     }
                 } else {
                     $payload[$field_name] = '';
@@ -462,80 +575,125 @@ final class VGT_Omega_API {
             ];
 
             if (!VGT_Omega_DB::insert_submission($submission_data)) {
-                throw new VGT_Storage_Exception('Database write fault during submission insertion.');
+                throw new \VGTOmegaVault\StorageException('Database write fault during submission insertion.');
             }
 
             // Secure alert email without plaintext payload contents
             self::dispatch_notification();
 
-            wp_send_json_success(['message' => esc_html__('Formulardaten verschlüsselt übertragen.', 'vgt-omega-vault')]);
+            return esc_html__('Formulardaten verschlüsselt übertragen.', 'vgt-omega-vault');
+        });
 
-        } catch (VGT_Validation_Exception $e) {
-            wp_send_json_error(['message' => $e->getMessage()], 400);
-        } catch (VGT_Security_Exception $e) {
-            error_log('[VGT_SEC] ' . $e->getMessage());
-            wp_send_json_error(['message' => esc_html__('Anfrage aus Sicherheitsgründen abgelehnt.', 'vgt-omega-vault')], 403);
-        } catch (VGT_Storage_Exception $e) {
-            error_log('[VGT_STORAGE] ' . $e->getMessage());
-            wp_send_json_error(['message' => esc_html__('Datenbankfehler beim Sichern.', 'vgt-omega-vault')], 500);
-        } catch (Throwable $e) {
-            error_log('[VGT_FATAL] ' . $e->getMessage());
-            wp_send_json_error(['message' => esc_html__('Systemfehler.', 'vgt-omega-vault')], 500);
+        if ($response['status'] === 'success') {
+            wp_send_json_success(['message' => $response['data']]);
+        } else {
+            $code = 500;
+            if ($response['message'] === 'Request rejected for security reasons.') {
+                $code = 403;
+            } elseif (strpos($response['message'], 'erforderlich') !== false || 
+                      strpos($response['message'], 'Syntax-Fehler') !== false || 
+                      strpos($response['message'], 'Ungültiges') !== false || 
+                      strpos($response['message'], 'Bitte warten') !== false || 
+                      strpos($response['message'], 'zustimmen') !== false ||
+                      strpos($response['message'], 'nicht erlaubt') !== false) {
+                $code = 400;
+            }
+            wp_send_json_error(['message' => $response['message']], $code);
         }
     }
 
     public static function handle_get_submissions(): void {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => esc_html__('Unauthorized clearance level.', 'vgt-omega-vault')], 403);
-        }
+        $response = \VGTOmegaVault\CoreEngine::getInstance()->execute(static function() {
+            if (!current_user_can('manage_options')) {
+                throw new \VGTOmegaVault\SecurityException('Unauthorized clearance level.');
+            }
 
-        check_ajax_referer('vgt_save_config_nonce', 'security');
+            $post_data = self::validate_content_type_and_parse_body();
 
-        global $wpdb;
-        $form_id = isset($_POST['form_id']) ? (int)$_POST['form_id'] : 0;
-        $page = isset($_POST['paged']) ? max(1, (int)$_POST['paged']) : 1;
-        $per_page = 50;
+            $nonce = isset($post_data['security']) && is_string($post_data['security']) ? $post_data['security'] : '';
+            if (!wp_verify_nonce($nonce, 'vgt_save_config_nonce')) {
+                throw new \VGTOmegaVault\SecurityException('CSRF token validation failed.');
+            }
 
-        $submissions = VGT_Omega_DB::get_paginated_submissions($form_id, $page, $per_page);
-        $total_count = VGT_Omega_DB::get_total_submissions_count($form_id);
+            global $wpdb;
+            $form_id = isset($post_data['form_id']) && !is_array($post_data['form_id']) ? (int)$post_data['form_id'] : 0;
+            $page = isset($post_data['paged']) && !is_array($post_data['paged']) ? max(1, (int)$post_data['paged']) : 1;
+            $per_page = 50;
 
-        $decrypted_list = [];
-        $table_name = $wpdb->prefix . VGT_Omega_DB::SUBMISSIONS_TABLE;
+            $submissions = VGT_Omega_DB::get_paginated_submissions($form_id, $page, $per_page);
+            $total_count = VGT_Omega_DB::get_total_submissions_count($form_id);
 
-        foreach ($submissions as $sub) {
-            $dec_payload = VGT_Omega_Crypto::decrypt((string)$sub->payload, 'submission_payload', (int)$sub->id, 'payload', $form_id, $table_name);
-            $dec_socket  = VGT_Omega_Crypto::decrypt((string)$sub->ip_socket, 'ip_socket', (int)$sub->id, 'ip_socket', $form_id, $table_name);
-            $dec_claimed = VGT_Omega_Crypto::decrypt((string)$sub->ip_claimed, 'ip_claimed', (int)$sub->id, 'ip_claimed', $form_id, $table_name);
+            $decrypted_list = [];
+            $table_name = $wpdb->prefix . VGT_Omega_DB::SUBMISSIONS_TABLE;
 
-            $decrypted_list[] = [
-                'id'         => $sub->id,
-                'payload'    => json_decode($dec_payload, true) ?: $dec_payload,
-                'ip_socket'  => $dec_socket,
-                'ip_claimed' => $dec_claimed,
-                'created_at' => wp_date('Y.m.d H:i:s', strtotime((string)$sub->created_at))
+            foreach ($submissions as $sub) {
+                $dec_payload = VGT_Omega_Crypto::decrypt((string)$sub->payload, 'submission_payload', (int)$sub->id, 'payload', $form_id, $table_name);
+                $dec_socket  = VGT_Omega_Crypto::decrypt((string)$sub->ip_socket, 'ip_socket', (int)$sub->id, 'ip_socket', $form_id, $table_name);
+                $dec_claimed = VGT_Omega_Crypto::decrypt((string)$sub->ip_claimed, 'ip_claimed', (int)$sub->id, 'ip_claimed', $form_id, $table_name);
+
+                try {
+                    $payload_decoded = json_decode($dec_payload, true, 512, JSON_THROW_ON_ERROR);
+                } catch (\JsonException $e) {
+                    $payload_decoded = $dec_payload;
+                }
+
+                $decrypted_list[] = [
+                    'id'         => $sub->id,
+                    'payload'    => $payload_decoded,
+                    'ip_socket'  => $dec_socket,
+                    'ip_claimed' => $dec_claimed,
+                    'created_at' => wp_date('Y.m.d H:i:s', strtotime((string)$sub->created_at))
+                ];
+            }
+
+            return [
+                'submissions' => $decrypted_list,
+                'total'       => $total_count,
+                'pages'       => (int)ceil($total_count / $per_page),
+                'current'     => $page
             ];
-        }
+        });
 
-        wp_send_json_success([
-            'submissions' => $decrypted_list,
-            'total'       => $total_count,
-            'pages'       => (int)ceil($total_count / $per_page),
-            'current'     => $page
-        ]);
+        if ($response['status'] === 'success') {
+            wp_send_json_success($response['data']);
+        } else {
+            $code = 500;
+            if ($response['message'] === 'Request rejected for security reasons.') {
+                $code = 403;
+            }
+            wp_send_json_error(['message' => $response['message']], $code);
+        }
     }
 
     public static function handle_delete_submission(): void {
-        if (!current_user_can('manage_options')) {
-            wp_send_json_error(['message' => esc_html__('Unauthorized clearance level.', 'vgt-omega-vault')], 403);
-        }
+        $response = \VGTOmegaVault\CoreEngine::getInstance()->execute(static function() {
+            if (!current_user_can('manage_options')) {
+                throw new \VGTOmegaVault\SecurityException('Unauthorized clearance level.');
+            }
 
-        check_ajax_referer('vgt_save_config_nonce', 'security');
+            $post_data = self::validate_content_type_and_parse_body();
 
-        $submission_id = isset($_POST['submission_id']) ? (int)$_POST['submission_id'] : 0;
-        if ($submission_id > 0 && VGT_Omega_DB::delete_submission($submission_id)) {
-            wp_send_json_success(['message' => esc_html__('Eintrag mathematisch gelöscht.', 'vgt-omega-vault')]);
+            $nonce = isset($post_data['security']) && is_string($post_data['security']) ? $post_data['security'] : '';
+            if (!wp_verify_nonce($nonce, 'vgt_save_config_nonce')) {
+                throw new \VGTOmegaVault\SecurityException('CSRF token validation failed.');
+            }
+
+            $submission_id = isset($post_data['submission_id']) && !is_array($post_data['submission_id']) ? (int)$post_data['submission_id'] : 0;
+            if ($submission_id > 0 && VGT_Omega_DB::delete_submission($submission_id)) {
+                return esc_html__('Eintrag mathematisch gelöscht.', 'vgt-omega-vault');
+            } else {
+                throw new \VGTOmegaVault\StorageException('Fehler beim Löschen des Eintrags.');
+            }
+        });
+
+        if ($response['status'] === 'success') {
+            wp_send_json_success(['message' => $response['data']]);
         } else {
-            wp_send_json_error(['message' => esc_html__('Fehler beim Löschen des Eintrags.', 'vgt-omega-vault')], 500);
+            $code = 500;
+            if ($response['message'] === 'Request rejected for security reasons.') {
+                $code = 403;
+            }
+            wp_send_json_error(['message' => $response['message']], $code);
         }
     }
 }

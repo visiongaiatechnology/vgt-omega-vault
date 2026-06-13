@@ -319,6 +319,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const designBorderRadius = document.getElementById('design-border-radius');
     const designPadding = document.getElementById('design-padding');
     const designWidth = document.getElementById('design-width');
+    const designGdprEnabled = document.getElementById('design-gdpr-enabled');
+    const designGdprText = document.getElementById('design-gdpr-text');
 
     const updateDesignSettingsInState = () => {
         if (!currentFormState.settings) currentFormState.settings = {};
@@ -331,6 +333,8 @@ document.addEventListener('DOMContentLoaded', () => {
         currentFormState.settings.border_radius = designBorderRadius.value;
         currentFormState.settings.padding = designPadding.value;
         currentFormState.settings.width = designWidth.value;
+        currentFormState.settings.gdpr_enabled = designGdprEnabled ? designGdprEnabled.checked : false;
+        currentFormState.settings.gdpr_text = designGdprText ? designGdprText.value : '';
     };
 
     const applyLiveStyles = () => {
@@ -382,18 +386,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    [designTheme, designGoldAccent, designBgColor, designTextColor, designBgImage, designBtnText, designBorderRadius, designPadding, designWidth].forEach(el => {
+    [designTheme, designGoldAccent, designBgColor, designTextColor, designBgImage, designBtnText, designBorderRadius, designPadding, designWidth, designGdprEnabled, designGdprText].forEach(el => {
         if (el) {
             el.addEventListener('input', () => {
                 updateDesignSettingsInState();
                 applyLiveStyles();
+                renderCanvas();
             });
             el.addEventListener('change', () => {
                 updateDesignSettingsInState();
                 applyLiveStyles();
+                renderCanvas();
             });
         }
     });
+
+    if (designGdprEnabled) {
+        designGdprEnabled.addEventListener('change', () => {
+            const wrap = document.getElementById('design-gdpr-text-wrap');
+            if (wrap) {
+                wrap.style.display = designGdprEnabled.checked ? 'block' : 'none';
+            }
+        });
+    }
 
     // Inline edit listeners for preview header
     const previewTitle = document.getElementById('vgt-preview-title');
@@ -809,6 +824,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Helper to append navigation row to steps
     const appendStepNavigation = (stepWrap, stepIdx, totalSteps) => {
+        if (stepIdx === totalSteps - 1 && currentFormState.settings && currentFormState.settings.gdpr_enabled) {
+            const gdprDiv = document.createElement('div');
+            gdprDiv.className = 'vgt-fe-group vgt-gdpr-group';
+            gdprDiv.style.marginTop = '1.5rem';
+            gdprDiv.style.marginBottom = '1.5rem';
+            
+            const gdprTxt = currentFormState.settings.gdpr_text || 'Ich stimme der verschlüsselten Speicherung meiner eingegebenen Daten sowie meiner IP-Adresse zur Verarbeitung dieser Anfrage zu.';
+            gdprDiv.innerHTML = `
+                <label class="vgt-radio-label" style="display: flex; align-items: center; gap: 0.75rem; background: rgba(0,0,0,0.4); border: 1px solid var(--vgt-border); padding: 0.85rem 1rem; border-radius: calc(var(--vgt-radius, 8px) * 0.7); cursor: default; color: var(--vgt-text); margin: 0; width: 100%; box-sizing: border-box;">
+                    <input type="checkbox" checked disabled style="margin: 0; appearance: auto;">
+                    <span style="font-size: 0.8rem; line-height: 1.4; display: inline-block; text-align: left;">${escapeHtml(gdprTxt)}</span>
+                </label>
+            `;
+            stepWrap.appendChild(gdprDiv);
+        }
+
         const stepNav = document.createElement('div');
         stepNav.className = 'vgt-step-navigation';
         stepNav.style.display = 'flex';
@@ -828,7 +859,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const btnTxt = currentFormState.settings.button_text || 'Initialize Encryption';
             buttonsHTML += `
                 <button type="button" class="vgt-fe-btn vgt-submit-btn" style="width: auto; padding: 0.8rem 2rem; margin-left: auto;" disabled>
-                    <span class="btn-text">${escapeHtml(btnTxt)}</span>
+                     <span class="btn-text">${escapeHtml(btnTxt)}</span>
                 </button>
             `;
         }
@@ -903,6 +934,16 @@ document.addEventListener('DOMContentLoaded', () => {
             designBorderRadius.value = currentFormState.settings.border_radius || '8px';
             designPadding.value = currentFormState.settings.padding || '3rem';
             designWidth.value = currentFormState.settings.width || '780px';
+            if (designGdprEnabled) {
+                designGdprEnabled.checked = !!currentFormState.settings.gdpr_enabled;
+            }
+            if (designGdprText) {
+                designGdprText.value = currentFormState.settings.gdpr_text || 'Ich stimme der verschlüsselten Speicherung meiner eingegebenen Daten sowie meiner IP-Adresse zur Verarbeitung dieser Anfrage zu.';
+            }
+            const wrap = document.getElementById('design-gdpr-text-wrap');
+            if (wrap) {
+                wrap.style.display = (currentFormState.settings.gdpr_enabled) ? 'block' : 'none';
+            }
         } else {
             // Default reset state for new forms
             currentFormState = {
@@ -920,7 +961,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     border_radius: '8px',
                     padding: '3rem',
                     width: '780px',
-                    subtitle: 'End-to-End Encrypted Tunnel'
+                    subtitle: 'End-to-End Encrypted Tunnel',
+                    gdpr_enabled: false,
+                    gdpr_text: 'Ich stimme der verschlüsselten Speicherung meiner eingegebenen Daten sowie meiner IP-Adresse zur Verarbeitung dieser Anfrage zu.'
                 }
             };
             document.getElementById('vgt-builder-title').value = '';
@@ -935,6 +978,16 @@ document.addEventListener('DOMContentLoaded', () => {
             designBorderRadius.value = '8px';
             designPadding.value = '3rem';
             designWidth.value = '780px';
+            if (designGdprEnabled) {
+                designGdprEnabled.checked = false;
+            }
+            if (designGdprText) {
+                designGdprText.value = 'Ich stimme der verschlüsselten Speicherung meiner eingegebenen Daten sowie meiner IP-Adresse zur Verarbeitung dieser Anfrage zu.';
+            }
+            const wrap = document.getElementById('design-gdpr-text-wrap');
+            if (wrap) {
+                wrap.style.display = 'none';
+            }
         }
 
         selectedFieldId = null;

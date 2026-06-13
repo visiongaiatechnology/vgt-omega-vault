@@ -515,6 +515,16 @@ final class VGT_Omega_UI {
                                     <label class="vgt-fe-label"><?php echo esc_html__('Button CTA text', 'vgt-omega-vault'); ?></label>
                                     <input type="text" id="design-btn-text" class="vgt-fe-input" style="padding-left:1rem;" value="Initialize Encryption">
                                 </div>
+                                <div class="vgt-fe-group">
+                                    <label class="vgt-radio-label" style="background:transparent; border:none; padding:0;">
+                                        <input type="checkbox" id="design-gdpr-enabled">
+                                        <span><?php echo esc_html__('DS-GVO Einverständnis aktivieren', 'vgt-omega-vault'); ?></span>
+                                    </label>
+                                </div>
+                                <div class="vgt-fe-group" id="design-gdpr-text-wrap" style="display:none;">
+                                    <label class="vgt-fe-label"><?php echo esc_html__('Zustimmungstext', 'vgt-omega-vault'); ?></label>
+                                    <textarea id="design-gdpr-text" class="vgt-fe-input vgt-fe-textarea" style="padding-left:1rem; height:80px; min-height:80px;"></textarea>
+                                </div>
                             </div>
                         </div>
 

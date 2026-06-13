@@ -405,6 +405,8 @@ final class VGT_Omega_Frontend {
         $text_color = $settings['text_color'] ?? '#f9fafb';
         $title_color = $settings['title_color'] ?? '';
         $subtitle_color = $settings['subtitle_color'] ?? '';
+        $gdpr_enabled = !empty($settings['gdpr_enabled']);
+        $gdpr_text = $settings['gdpr_text'] ?? esc_html__('Ich stimme der verschlüsselten Speicherung meiner eingegebenen Daten sowie meiner IP-Adresse zur Verarbeitung dieser Anfrage zu.', 'vgt-omega-vault');
 
         // Compute styling rules
         $inline_style = '';
@@ -921,6 +923,15 @@ final class VGT_Omega_Frontend {
                             <?php endif; ?>
                         <?php endforeach; ?>
 
+                        <?php if ($step_count === $total_steps - 1 && $gdpr_enabled) : ?>
+                            <div class="vgt-fe-group vgt-gdpr-group" style="margin-top: 1.5rem; margin-bottom: 1.5rem;">
+                                <label class="vgt-radio-label vgt-gdpr-label" style="display: flex; align-items: center; gap: 0.75rem; background: rgba(0,0,0,0.4); border: 1px solid var(--vgt-border); padding: 0.85rem 1rem; border-radius: calc(var(--vgt-radius, 8px) * 0.7); cursor: pointer; color: var(--vgt-text); margin: 0; width: 100%; box-sizing: border-box;">
+                                    <input type="checkbox" name="vgt_gdpr_consent" value="1" required style="margin: 0; appearance: auto;">
+                                    <span style="font-size: 0.8rem; line-height: 1.4; display: inline-block; text-align: left; text-transform: none; letter-spacing: normal; font-family: inherit; font-weight: normal; color: inherit;"><?php echo esc_html($gdpr_text); ?></span>
+                                </label>
+                            </div>
+                        <?php endif; ?>
+
                         <!-- Step Navigation Controls -->
                         <div class="vgt-step-navigation">
                             <?php if ($step_count > 0) : ?>
@@ -986,6 +997,17 @@ final class VGT_Omega_Frontend {
                         const name = field.name;
                         const checked = form.querySelector(`input[name="${name}"]:checked`);
                         if (!checked) valid = false;
+                    } else if (field.type === 'checkbox') {
+                        if (!field.checked) {
+                            valid = false;
+                            const labelWrap = field.closest('.vgt-gdpr-label');
+                            if (labelWrap) {
+                                labelWrap.style.borderColor = 'var(--vgt-error, #ef4444)';
+                                field.addEventListener('change', () => {
+                                    labelWrap.style.borderColor = '';
+                                }, { once: true });
+                            }
+                        }
                     } else {
                         if (!field.value.trim()) {
                             valid = false;
