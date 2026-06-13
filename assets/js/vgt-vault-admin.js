@@ -1108,29 +1108,44 @@ document.addEventListener('DOMContentLoaded', () => {
                     const row = document.createElement('tr');
                     row.setAttribute('data-sub-row-id', sub.id);
                     
-                    let cellsHTML = `<td class="vgt-mono vgt-title-xs" style="color:var(--vgt-text-muted);">${escapeHtml(sub.created_at)}</td>`;
+                    const tdDate = document.createElement('td');
+                    tdDate.className = 'vgt-mono vgt-title-xs';
+                    tdDate.style.color = 'var(--vgt-text-muted)';
+                    tdDate.textContent = sub.created_at;
+                    row.appendChild(tdDate);
                     
                     activeFields.forEach(f => {
+                        const tdData = document.createElement('td');
                         const cellVal = sub.payload ? sub.payload[f.id] : '';
                         
                         if (cellVal && typeof cellVal === 'object' && cellVal.type === 'file_upload') {
-                            // Render link for file uploads
-                            cellsHTML += `<td><a href="${escapeHtml(cellVal.url)}" target="_blank" class="vgt-link">${escapeHtml(cellVal.name)}</a></td>`;
+                            const link = document.createElement('a');
+                            link.href = cellVal.url;
+                            link.target = '_blank';
+                            link.className = 'vgt-link';
+                            link.textContent = cellVal.name;
+                            tdData.appendChild(link);
                         } else {
-                            cellsHTML += `<td>${escapeHtml(String(cellVal || '-'))}</td>`;
+                            tdData.textContent = String(cellVal || '-');
                         }
+                        row.appendChild(tdData);
                     });
-
-                    cellsHTML += `<td class="vgt-mono">${escapeHtml(sub.ip_socket)}</td>`;
-                    cellsHTML += `
-                        <td class="text-right">
-                            <button type="button" class="vgt-btn-danger delete-sub" data-sub-id="${escapeHtml(String(sub.id))}">
-                                🗑️
-                            </button>
-                        </td>
-                    `;
-                    row.innerHTML = cellsHTML;
-
+                    
+                    const tdSocket = document.createElement('td');
+                    tdSocket.className = 'vgt-mono';
+                    tdSocket.textContent = sub.ip_socket;
+                    row.appendChild(tdSocket);
+                    
+                    const tdActions = document.createElement('td');
+                    tdActions.className = 'text-right';
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.className = 'vgt-btn-danger delete-sub';
+                    delBtn.setAttribute('data-sub-id', String(sub.id));
+                    delBtn.textContent = '🗑️';
+                    tdActions.appendChild(delBtn);
+                    row.appendChild(tdActions);
+                    
                     tbody.appendChild(row);
                 });
 

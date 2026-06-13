@@ -106,7 +106,8 @@ final class VGT_Omega_Scanner {
                 if ($img_info === false || empty($img_info['mime'])) {
                     throw new \VGTOmegaVault\SecurityException('MIME-Type verifier fallback failed for image content.');
                 }
-                self::verify_mime_consistency($ext, $img_info['mime']);
+                $mime = $img_info['mime'];
+                self::verify_mime_consistency($ext, $mime);
             }
         }
 
@@ -119,8 +120,24 @@ final class VGT_Omega_Scanner {
         // 3. Malware Signature Engine matching
         self::match_signatures($contents, $orig_name);
 
-        // 4. Image-Sanitization & EXIF-Wipe
+        // 4. Image-Sanitization & EXIF-Wipe + Strikter MIME Cross-Check (Pattern 1.5.D)
         if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif'], true)) {
+            $imageInfo = @getimagesize($temp_path);
+            if ($imageInfo === false) {
+                throw new \VGTOmegaVault\SecurityException('Image metadata extraction failed.');
+            }
+            
+            $expectedType = match($mime) {
+                'image/jpeg', 'image/pjpeg' => IMAGETYPE_JPEG,
+                'image/png'                 => IMAGETYPE_PNG,
+                'image/gif'                 => IMAGETYPE_GIF,
+                default                     => throw new \VGTOmegaVault\SecurityException('Unsupported image mime context.'),
+            };
+
+            if ($imageInfo[2] !== $expectedType) {
+                throw new \VGTOmegaVault\SecurityException('MIME/type mismatch. Polyglot vector blocked.');
+            }
+
             self::sanitize_image($temp_path, $ext);
         }
 
