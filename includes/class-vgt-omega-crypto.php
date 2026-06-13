@@ -99,7 +99,7 @@ final class VGT_Omega_Crypto {
         return sanitize_text_field((string)$domain);
     }
 
-    public static function encrypt(string $data, string $context = 'payload'): string {
+    public static function encrypt(string $data, string $context = 'payload', ?int $form_id = null): string {
         if ($data === '') {
             return '';
         }
@@ -110,7 +110,7 @@ final class VGT_Omega_Crypto {
         $iv = random_bytes($iv_len);
         $tag = '';
         
-        $aad = $context . '|' . self::get_site_domain();
+        $aad = $context . '|' . self::get_site_domain() . ($form_id !== null ? '|' . $form_id : '');
         
         $ciphertext = openssl_encrypt(
             $data, 
@@ -130,7 +130,7 @@ final class VGT_Omega_Crypto {
         return base64_encode($iv . $tag . $ciphertext);
     }
 
-    public static function decrypt(string $payload, string $context = 'payload', ?int $db_row_id = null, ?string $db_column = null): string {
+    public static function decrypt(string $payload, string $context = 'payload', ?int $db_row_id = null, ?string $db_column = null, ?int $form_id = null, ?string $table_name = null): string {
         if ($payload === '') {
             return '';
         }
@@ -152,7 +152,7 @@ final class VGT_Omega_Crypto {
         $ciphertext = substr($data, $iv_len + self::GCM_TAG_LENGTH);
         
         $supreme_key = self::get_supreme_cipher_key();
-        $aad = $context . '|' . self::get_site_domain();
+        $aad = $context . '|' . self::get_site_domain() . ($form_id !== null ? '|' . $form_id : '');
         
         $decrypted = openssl_decrypt(
             $ciphertext, 
@@ -180,7 +180,7 @@ final class VGT_Omega_Crypto {
         
         if ($decrypted !== false) {
             if ($db_row_id !== null && $db_column !== null) {
-                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context);
+                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context, $form_id, $table_name);
             }
             return $decrypted;
         }
@@ -199,7 +199,7 @@ final class VGT_Omega_Crypto {
         
         if ($decrypted !== false) {
             if ($db_row_id !== null && $db_column !== null) {
-                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context);
+                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context, $form_id, $table_name);
             }
             return $decrypted;
         }
@@ -207,17 +207,17 @@ final class VGT_Omega_Crypto {
         return '[DECRYPTION_FAILED_OR_TAMPERED]';
     }
 
-    private static function trigger_background_upgrade(int $row_id, string $column, string $plain_text, string $context): void {
+    private static function trigger_background_upgrade(int $row_id, string $column, string $plain_text, string $context, ?int $form_id = null, ?string $table_name = null): void {
         global $wpdb;
-        $table = $wpdb->prefix . VGT_Omega_DB::TABLE_NAME;
+        $table = $table_name ?: ($wpdb->prefix . VGT_Omega_DB::TABLE_NAME);
         
-        $allowed_columns = ['domain', 'email', 'vector', 'threat', 'ip_origin', 'ip_socket', 'ip_claimed'];
+        $allowed_columns = ['domain', 'email', 'vector', 'threat', 'ip_origin', 'ip_socket', 'ip_claimed', 'payload'];
         if (!in_array($column, $allowed_columns, true)) {
             return;
         }
 
         try {
-            $new_encrypted = self::encrypt($plain_text, $context);
+            $new_encrypted = self::encrypt($plain_text, $context, $form_id);
             $wpdb->update(
                 $table,
                 [$column => $new_encrypted],

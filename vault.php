@@ -50,16 +50,25 @@ final class VGT_Omega_Bootstrapper {
         add_action('admin_menu', [self::class, 'register_menu']);
         add_action('admin_enqueue_scripts', [self::class, 'enqueue_admin_assets']);
         
-        // API Endpoints
+        // API Endpoints (Legacy)
         add_action('wp_ajax_vgt_omega_audit_request', [VGT_Omega_API::class, 'handle_request']);
         add_action('wp_ajax_nopriv_vgt_omega_audit_request', [VGT_Omega_API::class, 'handle_request']);
         add_action('admin_post_vgt_delete_audit', [self::class, 'handle_deletion']);
         
+        // API Endpoints (New Builder)
+        add_action('wp_ajax_vgt_save_form_builder', [VGT_Omega_API::class, 'handle_save_form']);
+        add_action('wp_ajax_vgt_delete_form', [VGT_Omega_API::class, 'handle_delete_form']);
+        add_action('wp_ajax_vgt_submit_builder_form', [VGT_Omega_API::class, 'handle_submit_builder_form']);
+        add_action('wp_ajax_nopriv_vgt_submit_builder_form', [VGT_Omega_API::class, 'handle_submit_builder_form']);
+        add_action('wp_ajax_vgt_get_submissions', [VGT_Omega_API::class, 'handle_get_submissions']);
+        add_action('wp_ajax_vgt_delete_submission', [VGT_Omega_API::class, 'handle_delete_submission']);
+
         // Asynchronous Settings Saving (AJAX)
         add_action('wp_ajax_vgt_save_config', [self::class, 'handle_config_save']);
 
-        // Frontend Com-Link Generator
+        // Frontend Com-Link Generator (Legacy & New Builder)
         add_shortcode('vgt_omega_comlink', [VGT_Omega_Frontend::class, 'render_shortcode']);
+        add_shortcode('vgt_omega_form', [VGT_Omega_Frontend::class, 'render_form_shortcode']);
     }
 
     /**

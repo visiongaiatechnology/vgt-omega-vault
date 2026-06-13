@@ -249,4 +249,40 @@ class VGT_Omega_API_Test extends PHPUnit\Framework\TestCase {
 
         $this->assertEquals('203.0.113.195', $profile->claimed, 'Der Konstanten-Override muss die Datenbank-Option überschreiben.');
     }
+
+    /**
+     * TEST 9: Cloudflare IP-Validierung vertraut echten Cloudflare-IPs
+     */
+    public function test_cloudflare_ip_validation_trusts_legitimate_ranges(): void {
+        $this->setProxyTrustOption(true);
+
+        // IP aus dem legitimen Cloudflare-Bereich (z.B. 108.162.193.100 in 108.162.192.0/18)
+        $server_mock = [
+            'REMOTE_ADDR'             => '108.162.193.100', 
+            'HTTP_CF_CONNECTING_IP'  => '203.0.113.195', // Behauptete Client-IP
+        ];
+
+        $profile = VGT_Omega_API::get_ip_profile($server_mock);
+
+        $this->assertEquals('108.162.193.100', $profile->socket);
+        $this->assertEquals('203.0.113.195', $profile->claimed, 'Cloudflare-Header muss bei legitimer Cloudflare-IP ausgelesen werden.');
+    }
+
+    /**
+     * TEST 10: Cloudflare IP-Validierung weist gefälschte Anfragen ab
+     */
+    public function test_cloudflare_ip_validation_rejects_spoofed_non_cf_ranges(): void {
+        $this->setProxyTrustOption(true);
+
+        // Angreifer-IP, die nicht zu Cloudflare gehört, sendet gefälschten HTTP_CF_CONNECTING_IP-Header
+        $server_mock = [
+            'REMOTE_ADDR'             => '198.51.100.42', // Nicht-Cloudflare
+            'HTTP_CF_CONNECTING_IP'  => '203.0.113.195', // Spoofed
+        ];
+
+        $profile = VGT_Omega_API::get_ip_profile($server_mock);
+
+        $this->assertEquals('198.51.100.42', $profile->socket);
+        $this->assertEquals('none', $profile->claimed, 'Gefälschte Cloudflare-Header von Nicht-Cloudflare-IPs müssen ignoriert werden.');
+    }
 }
