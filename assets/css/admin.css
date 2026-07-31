@@ -1,0 +1,131 @@
+/* STATUS: PLATIN */
+
+.vgt-admin {
+    max-width: 1500px;
+}
+
+.vgt-admin .nav-tab-wrapper {
+    margin-bottom: 1.25rem;
+}
+
+.vgt-grid {
+    display: grid;
+    grid-template-columns: minmax(24rem, 1fr) minmax(28rem, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+}
+
+.vgt-card {
+    margin: 1.25rem 0;
+    padding: 1.25rem;
+    border: 1px solid #2c3338;
+    border-radius: 0.65rem;
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+.vgt-card form {
+    display: grid;
+    gap: 0.7rem;
+}
+
+.vgt-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.vgt-actions form,
+.vgt-submission form {
+    display: inline;
+    margin: 0;
+}
+
+.vgt-submission {
+    margin: 1rem 0;
+    padding: 1rem;
+    border: 1px solid #c3c4c7;
+    border-radius: 0.5rem;
+    background: #f9f9f9;
+}
+
+.vgt-submission header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+}
+
+.vgt-payload {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.vgt-payload > div,
+.vgt-runtime > div {
+    display: grid;
+    grid-template-columns: minmax(8rem, 12rem) 1fr;
+    gap: 1rem;
+    padding: 0.55rem 0;
+    border-bottom: 1px solid #dcdcde;
+}
+
+.vgt-payload dt,
+.vgt-runtime dt {
+    font-weight: 700;
+}
+
+.vgt-payload dd,
+.vgt-runtime dd {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.vgt-payload pre {
+    max-height: 24rem;
+    overflow: auto;
+    white-space: pre-wrap;
+}
+
+.vgt-meta {
+    color: #50575e;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.vgt-error {
+    color: #b32d2e;
+    font-weight: 700;
+}
+
+.vgt-filter {
+    display: flex !important;
+    flex-direction: row;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.vgt-settings {
+    max-width: 52rem;
+}
+
+.vgt-checkbox {
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
+}
+
+.tablenav-pages {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 1rem;
+}
+
+@media (max-width: 1100px) {
+    .vgt-grid {
+        grid-template-columns: 1fr;
+    }
+}

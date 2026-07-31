@@ -1,232 +1,503 @@
 <?php
-/**
- * VGT OMEGA VAULT: Kryptografischer Kernel (AES-256-GCM)
- */
+// STATUS: PLATIN
 
 declare(strict_types=1);
 
 if (!defined('ABSPATH')) {
-    exit('VGT SECURE ZONE: DIRECT ACCESS FORBIDDEN');
+    exit;
 }
 
-final class VGT_Omega_Crypto {
-    
-    private const KEY_DIR = '/vgt_keys';
-    private const KEY_FILE = '/.vgt_core_secret.php';
+final class VGT_Omega_Crypto
+{
     private const CIPHER = 'aes-256-gcm';
-    private const GCM_TAG_LENGTH = 16;
+    private const TAG_BYTES = 16;
+    private const IV_BYTES = 12;
+    private const VERSION_PREFIX = 'v3.';
+    private const LEGACY_KEY_DIR = '/vgt_keys';
+    private const LEGACY_KEY_FILE = '/.vgt_core_secret.php';
 
-    /**
-     * Stellt die Integrität des physischen Dateischlüssels im Upload-Verzeichnis sicher.
-     * Nutzt modernes Apache 2.4 Hardening für die .htaccess-Datei.
-     */
-    public static function verify_vault_integrity(): void {
-        $upload_dir = wp_upload_dir();
-        $vault_dir = $upload_dir['basedir'] . self::KEY_DIR;
-        $key_path = $vault_dir . self::KEY_FILE;
+    private static ?string $secretCache = null;
 
-        if (!file_exists($vault_dir)) {
-            wp_mkdir_p($vault_dir);
-        }
+    public static function installKey(): void
+    {
+        VGT_Omega_Config::assertEnvironment();
 
-        $htaccess = $vault_dir . '/.htaccess';
-        if (!file_exists($htaccess)) {
-            $htaccess_content = "# VGT OMEGA VAULT: DIRECT FILE ACCESS PROTECTION\n" .
-                "<IfModule mod_authz_core.c>\n" .
-                "    Require all denied\n" .
-                "</IfModule>\n" .
-                "<IfModule !mod_authz_core.c>\n" .
-                "    Order Deny,Allow\n" .
-                "    Deny from all\n" .
-                "</IfModule>\n";
-            file_put_contents($htaccess, $htaccess_content);
-        }
-
-        $index = $vault_dir . '/index.php';
-        if (!file_exists($index)) {
-            file_put_contents($index, "<?php\n// VGT ZERO-SPACE");
-        }
-
-        if (!file_exists($key_path)) {
-            try {
-                $entropy = bin2hex(random_bytes(32));
-            } catch (\Throwable $e) {
-                $entropy = hash('sha256', uniqid((string)wp_hash('vgt-entropy'), true));
-            }
-            $sha_key = hash('sha256', $entropy);
-            
-            $file_content = "<?php\nif(!defined('ABSPATH')) exit('VGT SECURE ZONE');\nif(!defined('VGT_OMEGA_SECRET')) {\n    define('VGT_OMEGA_SECRET', '$sha_key');\n}\n";
-            file_put_contents($key_path, $file_content);
-            @chmod($key_path, 0600);
-        }
-    }
-
-    private static function get_omega_secret_raw(): string {
-        $upload_dir = wp_upload_dir();
-        $key_path = $upload_dir['basedir'] . self::KEY_DIR . self::KEY_FILE;
-        
-        if (file_exists($key_path)) {
-            require_once($key_path);
-        }
-
-        if (!defined('VGT_OMEGA_SECRET')) {
-            wp_die('VGT SYSTEM HALT: Cryptographic core failure.');
-        }
-
-        return VGT_OMEGA_SECRET;
-    }
-
-    private static function get_legacy_cipher_key(): string {
-        return hash('sha256', self::get_omega_secret_raw(), true);
-    }
-
-    private static function get_supreme_cipher_key(): string {
-        $secret = self::get_omega_secret_raw();
-        $salt = defined('SECURE_AUTH_KEY') ? SECURE_AUTH_KEY : 'vgt-emergency-omega-salt';
-        
-        if (function_exists('hash_hkdf')) {
-            return hash_hkdf('sha256', $secret, 32, 'vgt_omega_supreme_v5_binding', $salt);
-        }
-        
-        return hash_hmac('sha256', $secret . 'vgt_omega_supreme_v5_binding', $salt, true);
-    }
-
-    private static function get_site_domain(): string {
-        $domain = 'vgt-omega-local';
-        if (function_exists('home_url')) {
-            $domain = parse_url(home_url(), PHP_URL_HOST) ?: home_url();
-        }
-        return sanitize_text_field((string)$domain);
-    }
-
-    public static function encrypt(string $data, string $context = 'payload', ?int $form_id = null): string {
-        if ($data === '') {
-            return '';
-        }
-        
-        $key = self::get_supreme_cipher_key();
-        $iv_len = openssl_cipher_iv_length(self::CIPHER);
-        $iv_len = $iv_len !== false ? $iv_len : 12;
-        $iv = random_bytes($iv_len);
-        $tag = '';
-        
-        $aad = $context . '|' . self::get_site_domain() . ($form_id !== null ? '|' . $form_id : '');
-        
-        $ciphertext = openssl_encrypt(
-            $data, 
-            self::CIPHER, 
-            $key, 
-            OPENSSL_RAW_DATA, 
-            $iv, 
-            $tag, 
-            $aad, 
-            self::GCM_TAG_LENGTH
-        );
-
-        if ($ciphertext === false) {
-            throw new \RuntimeException('VGT Cryptographic write fault.');
-        }
-
-        return base64_encode($iv . $tag . $ciphertext);
-    }
-
-    public static function decrypt(string $payload, string $context = 'payload', ?int $db_row_id = null, ?string $db_column = null, ?int $form_id = null, ?string $table_name = null): string {
-        if ($payload === '') {
-            return '';
-        }
-        
-        $data = base64_decode($payload, true);
-        if ($data === false) {
-            return '[DECRYPTION_FAILED_OR_TAMPERED]';
-        }
-        
-        $iv_len = openssl_cipher_iv_length(self::CIPHER);
-        $iv_len = $iv_len !== false ? $iv_len : 12;
-        
-        if (strlen($data) < $iv_len + self::GCM_TAG_LENGTH) {
-            return '[DECRYPTION_FAILED_OR_TAMPERED]';
-        }
-        
-        $iv = substr($data, 0, $iv_len);
-        $tag = substr($data, $iv_len, self::GCM_TAG_LENGTH);
-        $ciphertext = substr($data, $iv_len + self::GCM_TAG_LENGTH);
-        
-        $supreme_key = self::get_supreme_cipher_key();
-        $aad = $context . '|' . self::get_site_domain() . ($form_id !== null ? '|' . $form_id : '');
-        
-        $decrypted = openssl_decrypt(
-            $ciphertext, 
-            self::CIPHER, 
-            $supreme_key, 
-            OPENSSL_RAW_DATA, 
-            $iv, 
-            $tag, 
-            $aad
-        );
-        
-        if ($decrypted !== false) {
-            return $decrypted;
-        }
-
-        $decrypted = openssl_decrypt(
-            $ciphertext, 
-            self::CIPHER, 
-            $supreme_key, 
-            OPENSSL_RAW_DATA, 
-            $iv, 
-            $tag, 
-            $context
-        );
-        
-        if ($decrypted !== false) {
-            if ($db_row_id !== null && $db_column !== null) {
-                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context, $form_id, $table_name);
-            }
-            return $decrypted;
-        }
-
-        $legacy_key = self::get_legacy_cipher_key();
-        
-        $decrypted = openssl_decrypt(
-            $ciphertext, 
-            self::CIPHER, 
-            $legacy_key, 
-            OPENSSL_RAW_DATA, 
-            $iv, 
-            $tag, 
-            ''
-        );
-        
-        if ($decrypted !== false) {
-            if ($db_row_id !== null && $db_column !== null) {
-                self::trigger_background_upgrade($db_row_id, $db_column, $decrypted, $context, $form_id, $table_name);
-            }
-            return $decrypted;
-        }
-
-        return '[DECRYPTION_FAILED_OR_TAMPERED]';
-    }
-
-    private static function trigger_background_upgrade(int $row_id, string $column, string $plain_text, string $context, ?int $form_id = null, ?string $table_name = null): void {
-        global $wpdb;
-        $table = $table_name ?: ($wpdb->prefix . VGT_Omega_DB::TABLE_NAME);
-        
-        $allowed_columns = ['domain', 'email', 'vector', 'threat', 'ip_origin', 'ip_socket', 'ip_claimed', 'payload'];
-        if (!in_array($column, $allowed_columns, true)) {
+        if (defined('VGT_OMEGA_MASTER_KEY') && is_string(VGT_OMEGA_MASTER_KEY)) {
+            self::normalizeSecret(VGT_OMEGA_MASTER_KEY);
             return;
         }
 
+        $storageRoot = VGT_Omega_Config::storageRoot();
+        self::assertExternalPath($storageRoot);
+        self::ensurePrivateDirectory($storageRoot);
+
+        $keyPath = VGT_Omega_Config::keyFile();
+        self::assertExternalPath(dirname($keyPath));
+        self::ensurePrivateDirectory(dirname($keyPath));
+
+        if (is_file($keyPath)) {
+            self::readSecretFile($keyPath);
+            return;
+        }
+
+        $legacy = self::readLegacySecret();
+        $secret = $legacy ?? bin2hex(random_bytes(32));
+        self::atomicWrite($keyPath, $secret . PHP_EOL, 0600);
+        self::$secretCache = $secret;
+
+    }
+
+    public static function finalizeLegacyMigration(): void
+    {
+        $legacy = self::readLegacySecret();
+        if ($legacy === null) {
+            return;
+        }
+
+        $current = self::readSecret();
+        if (!hash_equals($current, $legacy)) {
+            throw new \VGTOmegaVault\SecurityException('Legacy key migration validation failed.');
+        }
+
+        self::removeLegacyKey();
+    }
+
+    public static function verify_vault_integrity(): void
+    {
+        self::installKey();
+        self::assertExternalPath(dirname(VGT_Omega_Config::keyFile()));
+        self::readSecret();
+    }
+
+    public static function encrypt(string $data, string $context = 'payload', ?int $form_id = null): string
+    {
+        if ($data === '') {
+            return '';
+        }
+
+        $key = self::deriveKey('data-v7');
+        $iv = random_bytes(self::IV_BYTES);
+        $aad = self::aad($context, $form_id);
+        $tag = '';
+
+        $ciphertext = openssl_encrypt(
+            $data,
+            self::CIPHER,
+            $key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            $aad,
+            self::TAG_BYTES
+        );
+
+        self::wipe($key);
+
+        if ($ciphertext === false || strlen($tag) !== self::TAG_BYTES) {
+            throw new \VGTOmegaVault\StorageException('Cryptographic write fault.');
+        }
+
+        $envelope = [
+            'v' => 3,
+            'alg' => 'A256GCM',
+            'kid' => self::keyId(),
+            'iv' => self::b64urlEncode($iv),
+            'tag' => self::b64urlEncode($tag),
+            'ct' => self::b64urlEncode($ciphertext),
+        ];
+
+        return self::VERSION_PREFIX . self::b64urlEncode(
+            json_encode($envelope, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)
+        );
+    }
+
+    public static function decrypt(
+        string $payload,
+        string $context = 'payload',
+        ?int $db_row_id = null,
+        ?string $db_column = null,
+        ?int $form_id = null,
+        ?string $table_name = null
+    ): string {
+        unset($db_row_id, $db_column, $table_name);
+
+        if ($payload === '') {
+            return '';
+        }
+
+        if (str_starts_with($payload, self::VERSION_PREFIX)) {
+            return self::decryptV3(substr($payload, strlen(self::VERSION_PREFIX)), $context, $form_id);
+        }
+
+        return self::decryptLegacy($payload, $context, $form_id);
+    }
+
+    public static function isCurrentEnvelope(string $payload): bool
+    {
+        return str_starts_with($payload, self::VERSION_PREFIX);
+    }
+
+    public static function deriveKey(string $purpose, string $salt = ''): string
+    {
+        if (!preg_match('/^[a-z0-9._|-]{1,96}$/i', $purpose)) {
+            throw new \VGTOmegaVault\SecurityException('Invalid cryptographic context.');
+        }
+
+        $secretHex = self::readSecret();
+        $master = hex2bin($secretHex);
+        if ($master === false || strlen($master) !== 32) {
+            throw new \VGTOmegaVault\SecurityException('Master key material validation failed.');
+        }
+
+        $applicationSalt = hash('sha256', 'vgt-omega-v7-kdf-salt', true);
+        $derived = hash_hkdf('sha256', $master, 32, 'vgt-omega|' . $purpose, $applicationSalt . $salt);
+        self::wipe($master);
+
+        if (strlen($derived) !== 32) {
+            throw new \VGTOmegaVault\StorageException('Key derivation failed.');
+        }
+        return $derived;
+    }
+
+    public static function integrityHash(string $data, string $context): string
+    {
+        $key = self::deriveKey('integrity|' . $context);
+        $hash = hash_hmac('sha256', $data, $key);
+        self::wipe($key);
+        return $hash;
+    }
+
+    private static function decryptV3(string $encoded, string $context, ?int $formId): string
+    {
+        $json = self::b64urlDecode($encoded);
         try {
-            $new_encrypted = self::encrypt($plain_text, $context, $form_id);
-            $wpdb->update(
-                $table,
-                [$column => $new_encrypted],
-                ['id' => $row_id],
-                ['%s'],
-                ['%d']
+            $envelope = json_decode($json, true, 16, JSON_THROW_ON_ERROR);
+        } catch (\JsonException $e) {
+            throw new \VGTOmegaVault\SecurityException('Cipher envelope validation failed.');
+        }
+
+        if (!is_array($envelope)
+            || $envelope['v'] !== 3
+            || $envelope['alg'] !== 'A256GCM'
+            || !isset($envelope['kid'], $envelope['iv'], $envelope['tag'], $envelope['ct'])
+            || !is_string($envelope['kid'])
+            || !hash_equals(self::keyId(), $envelope['kid'])
+        ) {
+            throw new \VGTOmegaVault\SecurityException('Cipher envelope validation failed.');
+        }
+
+        $iv = self::b64urlDecode((string) $envelope['iv']);
+        $tag = self::b64urlDecode((string) $envelope['tag']);
+        $ciphertext = self::b64urlDecode((string) $envelope['ct']);
+
+        if (strlen($iv) !== self::IV_BYTES || strlen($tag) !== self::TAG_BYTES) {
+            throw new \VGTOmegaVault\SecurityException('Cipher envelope validation failed.');
+        }
+
+        $key = self::deriveKey('data-v7');
+        $plaintext = openssl_decrypt(
+            $ciphertext,
+            self::CIPHER,
+            $key,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            self::aad($context, $formId)
+        );
+        self::wipe($key);
+
+        if ($plaintext === false) {
+            throw new \VGTOmegaVault\SecurityException('Ciphertext authentication failed.');
+        }
+
+        return $plaintext;
+    }
+
+    private static function decryptLegacy(string $payload, string $context, ?int $formId): string
+    {
+        $data = base64_decode($payload, true);
+        if ($data === false || strlen($data) < self::IV_BYTES + self::TAG_BYTES) {
+            throw new \VGTOmegaVault\SecurityException('Legacy ciphertext validation failed.');
+        }
+
+        $iv = substr($data, 0, self::IV_BYTES);
+        $tag = substr($data, self::IV_BYTES, self::TAG_BYTES);
+        $ciphertext = substr($data, self::IV_BYTES + self::TAG_BYTES);
+        $secret = self::readSecret();
+        $salt = defined('SECURE_AUTH_KEY') && is_string(SECURE_AUTH_KEY)
+            ? SECURE_AUTH_KEY
+            : 'vgt-emergency-omega-salt';
+
+        $supreme = hash_hkdf('sha256', $secret, 32, 'vgt_omega_supreme_v5_binding', $salt);
+        $domain = self::siteDomain();
+        $aadCandidates = [
+            $context . '|' . $domain . ($formId !== null ? '|' . $formId : ''),
+            $context,
+        ];
+
+        foreach ($aadCandidates as $aad) {
+            $plaintext = openssl_decrypt(
+                $ciphertext,
+                self::CIPHER,
+                $supreme,
+                OPENSSL_RAW_DATA,
+                $iv,
+                $tag,
+                $aad
             );
-        } catch (\Throwable $e) {
-            error_log('[VGT_OMEGA_UPGRADE_ERROR] Failed to upgrade database record: ' . $e->getMessage());
+            if ($plaintext !== false) {
+                self::wipe($supreme);
+                return $plaintext;
+            }
+        }
+
+        $legacyKey = hash('sha256', $secret, true);
+        $plaintext = openssl_decrypt(
+            $ciphertext,
+            self::CIPHER,
+            $legacyKey,
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            ''
+        );
+
+        self::wipe($supreme);
+        self::wipe($legacyKey);
+
+        if ($plaintext === false) {
+            throw new \VGTOmegaVault\SecurityException('Legacy ciphertext authentication failed.');
+        }
+
+        return $plaintext;
+    }
+
+    private static function aad(string $context, ?int $formId): string
+    {
+        if (!preg_match('/^[a-z0-9._|-]{1,96}$/i', $context)) {
+            throw new \VGTOmegaVault\SecurityException('Invalid cryptographic context.');
+        }
+
+        return json_encode([
+            'v' => 3,
+            'kid' => self::keyId(),
+            'context' => $context,
+            'form_id' => $formId,
+        ], JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    }
+
+    private static function keyId(): string
+    {
+        return substr(hash('sha256', self::readSecret()), 0, 16);
+    }
+
+    private static function siteDomain(): string
+    {
+        $host = wp_parse_url(home_url('/'), PHP_URL_HOST);
+        if (!is_string($host) || $host === '') {
+            throw new \VGTOmegaVault\SecurityException('Site origin unavailable.');
+        }
+        return strtolower($host);
+    }
+
+    private static function readSecret(): string
+    {
+        if (self::$secretCache !== null) {
+            return self::$secretCache;
+        }
+
+        if (defined('VGT_OMEGA_MASTER_KEY') && is_string(VGT_OMEGA_MASTER_KEY)) {
+            self::$secretCache = self::normalizeSecret(VGT_OMEGA_MASTER_KEY);
+            return self::$secretCache;
+        }
+
+        self::installKey();
+        self::$secretCache = self::readSecretFile(VGT_Omega_Config::keyFile());
+        return self::$secretCache;
+    }
+
+    private static function readSecretFile(string $path): string
+    {
+        self::assertExternalPath(dirname($path));
+
+        $resolved = realpath($path);
+        if ($resolved === false || !is_file($resolved) || is_link($path)) {
+            throw new \VGTOmegaVault\SecurityException('Invalid key path.');
+        }
+
+        $perms = fileperms($resolved);
+        if ($perms === false || (($perms & 0o077) !== 0)) {
+            throw new \VGTOmegaVault\SecurityException('Key file permissions are too broad.');
+        }
+
+        $stat = stat($resolved);
+        if ($stat === false || (isset($stat['nlink']) && (int) $stat['nlink'] !== 1)) {
+            throw new \VGTOmegaVault\SecurityException('Key file hard-link validation failed.');
+        }
+        if (function_exists('posix_geteuid')
+            && isset($stat['uid'])
+            && (int) $stat['uid'] !== posix_geteuid()
+        ) {
+            throw new \VGTOmegaVault\SecurityException('Key file ownership validation failed.');
+        }
+
+        $contents = file_get_contents($resolved);
+        if ($contents === false) {
+            throw new \VGTOmegaVault\StorageException('Key file read failed.');
+        }
+
+        return self::normalizeSecret(trim($contents));
+    }
+
+    private static function normalizeSecret(string $value): string
+    {
+        $trimmed = trim($value);
+        if (preg_match('/^[a-f0-9]{64}$/i', $trimmed) === 1) {
+            return strtolower($trimmed);
+        }
+
+        $decoded = base64_decode($trimmed, true);
+        if ($decoded !== false && strlen($decoded) === 32) {
+            return bin2hex($decoded);
+        }
+
+        throw new \VGTOmegaVault\SecurityException('Master key validation failed.');
+    }
+
+    private static function readLegacySecret(): ?string
+    {
+        $upload = wp_upload_dir(null, false, true);
+        if (!empty($upload['error']) || !isset($upload['basedir']) || !is_string($upload['basedir'])) {
+            return null;
+        }
+
+        $path = $upload['basedir'] . self::LEGACY_KEY_DIR . self::LEGACY_KEY_FILE;
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $contents = file_get_contents($path);
+        if ($contents === false) {
+            throw new \VGTOmegaVault\StorageException('Legacy key read failed.');
+        }
+
+        if (preg_match("/define\\s*\\(\\s*['\"]VGT_OMEGA_SECRET['\"]\\s*,\\s*['\"]([a-f0-9]{64})['\"]\\s*\\)/i", $contents, $match) !== 1) {
+            throw new \VGTOmegaVault\SecurityException('Legacy key validation failed.');
+        }
+
+        return strtolower($match[1]);
+    }
+
+    private static function removeLegacyKey(): void
+    {
+        $upload = wp_upload_dir(null, false, true);
+        if (!isset($upload['basedir']) || !is_string($upload['basedir'])) {
+            return;
+        }
+
+        $directory = $upload['basedir'] . self::LEGACY_KEY_DIR;
+        $path = $directory . self::LEGACY_KEY_FILE;
+        if (is_file($path) && !unlink($path)) {
+            throw new \VGTOmegaVault\SecurityException('Legacy key path could not be removed.');
+        }
+
+        foreach (['/.htaccess', '/index.php'] as $companion) {
+            $candidate = $directory . $companion;
+            if (is_file($candidate)) {
+                @unlink($candidate);
+            }
+        }
+        if (is_dir($directory)) {
+            @rmdir($directory);
+        }
+    }
+
+    private static function ensurePrivateDirectory(string $directory): void
+    {
+        if (is_link($directory)) {
+            throw new \VGTOmegaVault\SecurityException('Private key directory symlink rejected.');
+        }
+
+        $previousUmask = umask(0077);
+        try {
+            if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) {
+                throw new \VGTOmegaVault\StorageException('Private key directory creation failed.');
+            }
+            if (!chmod($directory, 0700)) {
+                throw new \VGTOmegaVault\StorageException('Private key directory hardening failed.');
+            }
+        } finally {
+            umask($previousUmask);
+        }
+    }
+
+    private static function atomicWrite(string $path, string $contents, int $mode): void
+    {
+        $directory = dirname($path);
+        $tmp = $directory . DIRECTORY_SEPARATOR . '.tmp-' . bin2hex(random_bytes(12));
+        $previousUmask = umask(0077);
+
+        try {
+            $bytes = file_put_contents($tmp, $contents, LOCK_EX);
+            if ($bytes !== strlen($contents) || !chmod($tmp, $mode) || !rename($tmp, $path)) {
+                @unlink($tmp);
+                throw new \VGTOmegaVault\StorageException('Atomic key write failed.');
+            }
+        } finally {
+            umask($previousUmask);
+        }
+    }
+
+    private static function assertExternalPath(string $input): void
+    {
+        $resolvedDir = realpath($input);
+        if ($resolvedDir === false || !is_dir($resolvedDir)) {
+            $parent = realpath(dirname($input));
+            if ($parent === false || !is_dir($parent)) {
+                throw new \VGTOmegaVault\SecurityException('Invalid directory.');
+            }
+            $resolvedDir = $parent . DIRECTORY_SEPARATOR . basename($input);
+        }
+
+        $webRoots = array_filter([
+            realpath(ABSPATH),
+            defined('WP_CONTENT_DIR') ? realpath(WP_CONTENT_DIR) : false,
+        ], static fn(mixed $value): bool => is_string($value));
+
+        foreach ($webRoots as $webRoot) {
+            $root = rtrim($webRoot, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+            $candidate = rtrim($resolvedDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+            if (str_starts_with($candidate, $root)) {
+                throw new \VGTOmegaVault\SecurityException('Key path is inside the web root.');
+            }
+        }
+    }
+
+    private static function b64urlEncode(string $data): string
+    {
+        return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+    }
+
+    private static function b64urlDecode(string $data): string
+    {
+        if ($data === '' || preg_match('/^[A-Za-z0-9_-]+$/', $data) !== 1) {
+            throw new \VGTOmegaVault\SecurityException('Encoded token validation failed.');
+        }
+
+        $padding = (4 - (strlen($data) % 4)) % 4;
+        $decoded = base64_decode(strtr($data . str_repeat('=', $padding), '-_', '+/'), true);
+        if ($decoded === false) {
+            throw new \VGTOmegaVault\SecurityException('Encoded token validation failed.');
+        }
+        return $decoded;
+    }
+
+    private static function wipe(string &$value): void
+    {
+        if (function_exists('sodium_memzero')) {
+            sodium_memzero($value);
+        } else {
+            $value = str_repeat("\0", strlen($value));
         }
     }
 }

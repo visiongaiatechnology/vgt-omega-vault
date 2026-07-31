@@ -1,343 +1,278 @@
 <?php
+// STATUS: PLATIN
+
 declare(strict_types=1);
 
 if (!defined('ABSPATH')) {
-    exit('VGT SECURE ZONE: DIRECT ACCESS FORBIDDEN');
+    exit;
 }
 
-/**
- * ENGINE: VGT OMEGA FILE UPLOAD GUARD & SCANNER
- * Status: DIAMANT VGT SUPREME
- * 
- * Verifies Magic Bytes/MIME-type integrity, wipes EXIF metadata via image reconstruction,
- * cleans CSV Formula Injections, and scans binary/text streams for malware signatures.
- */
-final class VGT_Omega_Scanner {
-
-    private const SCAN_MAX_FILESIZE = 5242880; // 5MB limit
-    
-    private const ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'zip', 'csv'];
-
+final class VGT_Omega_Scanner
+{
     /**
-     * VGT EMBEDDED MALWARE SIGNATURE DATABASE
+     * @param array<string,mixed> $fileArray
+     * @param array<string,mixed> $policy
+     * @return array{path:string,original_tmp:string,name:string,mime:string,extension:string,size:int,sha256:string}
      */
-    private const MALWARE_SIGNATURES = [
-        'wp_vcd_injector'      => '/eval\s*\(\s*base64_decode\s*\(\s*gzinflate/i',
-        'pharma_hack'          => '/\$\w{1,3}\s*=\s*Array\s*\(\s*[\'"]\w+[\'"]\s*,\s*[\'"]\w+[\'"]\s*\)/',
-        'eval_base64_dropper'  => '/eval\s*\(\s*base64_decode\s*\(\s*[\'"][A-Za-z0-9+\/]{100,}[\'"]/i',
-        'eval_gzinflate'       => '/eval\s*\(\s*gzinflate\s*\(\s*base64_decode/i',
-        'webshell_wso'         => '/WSOsetcookie|WSOlogin|wso_(?:ex|login)/i',
-        'webshell_filesman'    => '/FilesMan|class\s+filesman/i',
-        'webshell_c99'         => '/c99sh|c99shell|c99madShell/i',
-        'webshell_r57'         => '/r57shell|r57\.gen|r57\.php/i',
-        'webshell_phpspy'      => '/phpspy|PhpSpy|PHPSpy/i',
-        'webshell_alfa'        => '/ALFA_DATA|alfaCmd|AlfaTeaM/i',
-        'webshell_marijuana'   => '/Marijuana\s+Shell|MarijuanaShell/i',
-        
-        // PHP Polyglots inside images
-        'gif_php_polyglot'     => '/^GIF89a.*?<\?(?:php|=)/s',
-        'jpg_php_polyglot'     => '/\xFF\xD8\xFF.*?<\?(?:php|=)/s',
-        'png_php_polyglot'     => '/\x89PNG\x0D\x0A.*?<\?(?:php|=)/s',
-        
-        // Command Execution & backdoor patterns
-        'shell_exec_userinput' => '/(?:shell_exec|passthru|system|exec|popen|proc_open)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE|SERVER)/i',
-        'eval_userinput'       => '/eval\s*\(\s*(?:stripslashes\s*\()?\s*\$_(?:GET|POST|REQUEST|COOKIE)/i',
-        'preg_replace_eval'    => '/preg_replace\s*\(\s*[\'"][^\'\"]*\/e[\'"]/',
-        'assert_userinput'     => '/assert\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)/i',
-        
-        // Remote file inclusion
-        'remote_include'       => '/(?:include|require)(?:_once)?\s*\(\s*[\'"]https?:\/\//i',
-        'data_wrapper_exec'    => '/(?:include|require)(?:_once)?\s*\(\s*[\'"]data:\/\//i',
-        'php_input_exec'       => '/(?:include|require)(?:_once)?\s*\(\s*[\'"]php:\/\/input/i',
-        'php_filter_exec'      => '/(?:include|require)(?:_once)?\s*\(\s*[\'"]php:\/\/filter/i',
-        
-        // XSS script tags and suspicious SVG/XML indicators
-        'xss_script_tags'      => '/<\s*script[^>]*>|javascript\s*:/i',
-        'xss_event_handlers'   => '/\bon(?:load|click|error|mouseover|focus)\s*=/i',
-        'xml_svg_script'       => '/<\s*svg.*?<\s*script/is'
-    ];
-
-    /**
-     * Entrypoint for file scanning and safety sanitization.
-     * Throws ValidationException or SecurityException if threat is detected.
-     */
-    public static function scan_and_sanitize(array $file_info): void {
-        $temp_path = $file_info['tmp_name'] ?? '';
-        $orig_name = $file_info['name'] ?? '';
-
-        if (!is_string($temp_path) || $temp_path === '' || !file_exists($temp_path)) {
-            throw new \VGTOmegaVault\ValidationException(esc_html__('Ungültiger Datei-Pfad.', 'vgt-omega-vault'));
-        }
-
-        if (!is_string($orig_name) || $orig_name === '') {
-            throw new \VGTOmegaVault\ValidationException(esc_html__('Fehlender Dateiname.', 'vgt-omega-vault'));
-        }
-
-        // 1. Strict Extension Check
-        $ext = strtolower(pathinfo($orig_name, PATHINFO_EXTENSION));
-        if (!in_array($ext, self::ALLOWED_EXTENSIONS, true)) {
-            throw new \VGTOmegaVault\ValidationException(sprintf(esc_html__('Dateityp .%s ist nicht erlaubt.', 'vgt-omega-vault'), $ext));
-        }
-
-        // Size check
-        $size = @filesize($temp_path);
-        if ($size === false || $size === 0 || $size > self::SCAN_MAX_FILESIZE) {
-            throw new \VGTOmegaVault\ValidationException(esc_html__('Datei überschreitet das maximale Limit.', 'vgt-omega-vault'));
-        }
-
-        // 2. Validate Echte Dateistruktur (Magic Bytes / MIME-Type Verification with fallback)
-        $mime = null;
-        if (function_exists('finfo_open')) {
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            if ($finfo !== false) {
-                $mime = finfo_file($finfo, $temp_path);
-                finfo_close($finfo);
+    public static function scan_and_sanitize(array $fileArray, array $policy = []): array
+    {
+        $requiredKeys = ['name', 'tmp_name', 'error'];
+        foreach ($requiredKeys as $key) {
+            if (!array_key_exists($key, $fileArray)) {
+                throw new \VGTOmegaVault\SecurityException('Upload validation failed: missing file metadata.');
             }
-        } elseif (function_exists('mime_content_type')) {
-            $mime = @mime_content_type($temp_path);
         }
 
-        if (is_string($mime) && $mime !== '') {
-            self::verify_mime_consistency($ext, $mime);
+        if (!is_string($fileArray['name']) || !is_string($fileArray['tmp_name']) || !is_int($fileArray['error'])) {
+            throw new \VGTOmegaVault\SecurityException('Upload validation failed: malformed file metadata.');
+        }
+
+        if ($fileArray['error'] !== UPLOAD_ERR_OK) {
+            throw new \VGTOmegaVault\ValidationException(self::uploadErrorMessage($fileArray['error']), 422);
+        }
+
+        $tempPath = $fileArray['tmp_name'];
+        if ($tempPath === '' || !is_uploaded_file($tempPath)) {
+            throw new \VGTOmegaVault\SecurityException('Upload path validation failed.');
+        }
+
+        $maxBytes = isset($policy['max_bytes']) && is_int($policy['max_bytes'])
+            ? max(1, min(VGT_Omega_Config::MAX_FILE_BYTES, $policy['max_bytes']))
+            : VGT_Omega_Config::MAX_FILE_BYTES;
+
+        $realSize = filesize($fileArray['tmp_name']);
+        if ($realSize === false || $realSize === 0 || $realSize > $maxBytes) {
+            throw new \VGTOmegaVault\ValidationException('Size boundary violation.', 413);
+        }
+
+        $name = self::sanitizeOriginalName($fileArray['name']);
+        $extension = strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+        if ($extension === '') {
+            throw new \VGTOmegaVault\ValidationException(__('File extension is required.', 'vgt-omega-vault'), 415);
+        }
+
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $detectedMime = $finfo->file($tempPath);
+        if (!is_string($detectedMime) || $detectedMime === '') {
+            throw new \VGTOmegaVault\SecurityException('MIME detection failed.');
+        }
+
+        $allowedMimes = isset($policy['allowed_mimes']) && is_array($policy['allowed_mimes'])
+            ? array_values(array_intersect($policy['allowed_mimes'], VGT_Omega_Config::globallyAllowedMimes()))
+            : ['image/jpeg', 'image/png', 'image/webp'];
+
+        if (!in_array($detectedMime, $allowedMimes, true)) {
+            throw new \VGTOmegaVault\ValidationException(__('File type is not permitted.', 'vgt-omega-vault'), 415);
+        }
+
+        self::verifyExtension($extension, $detectedMime);
+
+        $outputPath = $tempPath;
+        if (str_starts_with($detectedMime, 'image/')) {
+            $outputPath = self::reencodeImage($tempPath, $detectedMime);
+            $reencodedSize = filesize($outputPath);
+            if ($reencodedSize === false || $reencodedSize === 0 || $reencodedSize > $maxBytes) {
+                @unlink($outputPath);
+                throw new \VGTOmegaVault\ValidationException('Size boundary violation.', 413);
+            }
+            $realSize = $reencodedSize;
+        } elseif ($detectedMime === 'application/pdf') {
+            self::validatePdf($tempPath);
+        } elseif ($detectedMime === 'text/plain') {
+            self::validateText($tempPath);
         } else {
-            // High-security Fallback check for images using native getimagesize() parsing
-            if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif'], true)) {
-                $img_info = @getimagesize($temp_path);
-                if ($img_info === false || empty($img_info['mime'])) {
-                    throw new \VGTOmegaVault\SecurityException('MIME-Type verifier fallback failed for image content.');
-                }
-                $mime = $img_info['mime'];
-                self::verify_mime_consistency($ext, $mime);
+            throw new \VGTOmegaVault\SecurityException('Unsupported scanner route.');
+        }
+
+        $hash = hash_file('sha256', $outputPath);
+        if (!is_string($hash) || strlen($hash) !== 64) {
+            if ($outputPath !== $tempPath) {
+                @unlink($outputPath);
             }
+            throw new \VGTOmegaVault\StorageException('Upload hash calculation failed.');
         }
 
-        // Read file contents safely
-        $contents = @file_get_contents($temp_path);
-        if ($contents === false) {
-            throw new \VGTOmegaVault\ValidationException(esc_html__('Datei konnte nicht gelesen werden.', 'vgt-omega-vault'));
-        }
-
-        // 3. Malware Signature Engine matching
-        self::match_signatures($contents, $orig_name);
-
-        // 4. Image-Sanitization & EXIF-Wipe + Strikter MIME Cross-Check (Pattern 1.5.D)
-        if (in_array($ext, ['jpg', 'jpeg', 'png', 'gif'], true)) {
-            $imageInfo = @getimagesize($temp_path);
-            if ($imageInfo === false) {
-                throw new \VGTOmegaVault\SecurityException('Image metadata extraction failed.');
-            }
-            
-            $expectedType = match($mime) {
-                'image/jpeg', 'image/pjpeg' => IMAGETYPE_JPEG,
-                'image/png'                 => IMAGETYPE_PNG,
-                'image/gif'                 => IMAGETYPE_GIF,
-                default                     => throw new \VGTOmegaVault\SecurityException('Unsupported image mime context.'),
-            };
-
-            if ($imageInfo[2] !== $expectedType) {
-                throw new \VGTOmegaVault\SecurityException('MIME/type mismatch. Polyglot vector blocked.');
-            }
-
-            self::sanitize_image($temp_path, $ext);
-        }
-
-        // 5. XML/SVG Script Prevention (Blocking SVGs entirely as a supreme security measure)
-        if ($ext === 'svg' || strpos($orig_name, '.svg') !== false) {
-            throw new \VGTOmegaVault\SecurityException('SVG uploads are prohibited for security reasons.');
-        }
-
-        // 6. CSV Formula Injection Shield
-        if (in_array($ext, ['csv', 'txt'], true)) {
-            self::sanitize_csv($temp_path, $contents);
-        }
+        return [
+            'path' => $outputPath,
+            'original_tmp' => $tempPath,
+            'name' => $name,
+            'mime' => $detectedMime,
+            'extension' => $extension,
+            'size' => (int) $realSize,
+            'sha256' => $hash,
+        ];
     }
 
     /**
-     * Validates that the detected MIME type is consistent with the declared extension.
+     * Compatibility wrapper for the previous API.
+     *
+     * @param array<string,mixed> $fileInfo
      */
-    private static function verify_mime_consistency(string $ext, string $mime): void {
+    public static function scanAndSanitize(array $fileInfo): void
+    {
+        self::scan_and_sanitize($fileInfo);
+    }
+
+    private static function verifyExtension(string $extension, string $detectedMime): void
+    {
         $map = [
-            'jpg'  => ['image/jpeg', 'image/pjpeg'],
-            'jpeg' => ['image/jpeg', 'image/pjpeg'],
-            'png'  => ['image/png'],
-            'gif'  => ['image/gif'],
-            'pdf'  => ['application/pdf', 'application/x-pdf'],
-            'doc'  => ['application/msword'],
-            'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-            'xls'  => ['application/vnd.ms-excel'],
-            'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-            'txt'  => ['text/plain'],
-            'zip'  => ['application/zip', 'application/x-zip-compressed'],
-            'csv'  => ['text/csv', 'text/plain', 'text/x-csv', 'application/csv', 'application/x-csv']
+            'image/jpeg' => ['jpg', 'jpeg'],
+            'image/png' => ['png'],
+            'image/webp' => ['webp'],
+            'text/plain' => ['txt'],
+            'application/pdf' => ['pdf'],
         ];
 
-        if (isset($map[$ext])) {
-            $allowed_mimes = $map[$ext];
-            $matched = false;
-            foreach ($allowed_mimes as $allowed) {
-                if (stripos($mime, $allowed) !== false) {
-                    $matched = true;
-                    break;
-                }
-            }
-            if (!$matched) {
-                throw new \VGTOmegaVault\SecurityException('MIME-Type spoofing detected. Extension does not match file content.');
+        if (!isset($map[$detectedMime]) || !in_array($extension, $map[$detectedMime], true)) {
+            throw new \VGTOmegaVault\SecurityException('MIME/type mismatch. Polyglot vector blocked.');
+        }
+    }
+
+    private static function reencodeImage(string $path, string $detectedMime): string
+    {
+        if (!extension_loaded('gd')) {
+            throw new \VGTOmegaVault\SecurityException('Image sanitization requires GD.');
+        }
+
+        $imageInfo = getimagesize($path);
+        if (!is_array($imageInfo) || !isset($imageInfo[0], $imageInfo[1], $imageInfo[2])) {
+            throw new \VGTOmegaVault\SecurityException('Image parser rejected the upload.');
+        }
+
+        $width = (int) $imageInfo[0];
+        $height = (int) $imageInfo[1];
+        if ($width < 1 || $height < 1 || $width > 8_192 || $height > 8_192 || ($width * $height) > 20_000_000) {
+            throw new \VGTOmegaVault\ValidationException(__('Image dimensions exceed the security boundary.', 'vgt-omega-vault'), 413);
+        }
+
+        $expectedType = match($detectedMime) {
+            'image/jpeg' => IMAGETYPE_JPEG,
+            'image/png'  => IMAGETYPE_PNG,
+            'image/webp' => IMAGETYPE_WEBP,
+        };
+        if ($imageInfo[2] !== $expectedType) {
+            throw new \VGTOmegaVault\SecurityException('MIME/type mismatch. Polyglot vector blocked.');
+        }
+
+        $memoryLimit = self::parseIniBytes((string) ini_get('memory_limit'));
+        $estimated = ($width * $height * 8) + 16_777_216;
+        if ($memoryLimit > 0 && (memory_get_usage(true) + $estimated) > (int) floor($memoryLimit * 0.80)) {
+            throw new \VGTOmegaVault\ValidationException(__('Image requires excessive memory.', 'vgt-omega-vault'), 413);
+        }
+
+        $bytes = file_get_contents($path);
+        if ($bytes === false) {
+            throw new \VGTOmegaVault\StorageException('Image read failed.');
+        }
+
+        $image = imagecreatefromstring($bytes);
+        $bytes = '';
+        if ($image === false) {
+            throw new \VGTOmegaVault\SecurityException('Image decoder rejected the upload.');
+        }
+
+        $extension = match($detectedMime) {
+            'image/jpeg' => '.jpg',
+            'image/png' => '.png',
+            'image/webp' => '.webp',
+        };
+        $outputPath = trailingslashit(get_temp_dir()) . 'vgt-' . bin2hex(random_bytes(16)) . $extension;
+        $previousUmask = umask(0077);
+
+        try {
+            $success = match($detectedMime) {
+                'image/jpeg' => imagejpeg($image, $outputPath, 90),
+                'image/png' => imagepng($image, $outputPath, 6),
+                'image/webp' => imagewebp($image, $outputPath, 90),
+            };
+        } finally {
+            imagedestroy($image);
+            umask($previousUmask);
+        }
+
+        if (!$success || !is_file($outputPath) || !chmod($outputPath, 0600)) {
+            @unlink($outputPath);
+            throw new \VGTOmegaVault\SecurityException('Sanitized image write failed.');
+        }
+
+        return $outputPath;
+    }
+
+    private static function validatePdf(string $path): void
+    {
+        if (!(defined('VGT_OMEGA_ALLOW_PDF_UPLOADS') && VGT_OMEGA_ALLOW_PDF_UPLOADS === true)) {
+            throw new \VGTOmegaVault\ValidationException(__('PDF uploads are disabled.', 'vgt-omega-vault'), 415);
+        }
+
+        $contents = file_get_contents($path);
+        if ($contents === false) {
+            throw new \VGTOmegaVault\StorageException('PDF read failed.');
+        }
+
+        if (!str_starts_with($contents, '%PDF-') || stripos(substr($contents, -2048), '%%EOF') === false) {
+            throw new \VGTOmegaVault\SecurityException('PDF structure validation failed.');
+        }
+
+        foreach (['/JavaScript', '/JS', '/Launch', '/EmbeddedFile', '/OpenAction', '/AA', '/XFA', '/RichMedia'] as $dangerousToken) {
+            if (stripos($contents, $dangerousToken) !== false) {
+                throw new \VGTOmegaVault\SecurityException('Active PDF content blocked: ' . $dangerousToken);
             }
         }
     }
 
-    /**
-     * Checks raw data stream against the malware signature database.
-     */
-    private static function match_signatures(string $contents, string $filename): void {
-        $old_backtrack = ini_set('pcre.backtrack_limit', '1000000');
-        $old_recursion = ini_set('pcre.recursion_limit', '1000000');
-
-        foreach (self::MALWARE_SIGNATURES as $sig_name => $pattern) {
-            $result = @preg_match($pattern, $contents);
-            if ($result === 1) {
-                if ($old_backtrack !== false) ini_set('pcre.backtrack_limit', $old_backtrack);
-                if ($old_recursion !== false) ini_set('pcre.recursion_limit', $old_recursion);
-                throw new \VGTOmegaVault\SecurityException(sprintf('Malware signature matched in uploaded file: %s (%s)', esc_html($filename), $sig_name));
-            } elseif ($result === false) {
-                if ($old_backtrack !== false) ini_set('pcre.backtrack_limit', $old_backtrack);
-                if ($old_recursion !== false) ini_set('pcre.recursion_limit', $old_recursion);
-                throw new \VGTOmegaVault\SecurityException('Scanner PCRE evaluation failure. Fail-closed protection triggered.');
-            }
+    private static function validateText(string $path): void
+    {
+        if (!(defined('VGT_OMEGA_ALLOW_TEXT_UPLOADS') && VGT_OMEGA_ALLOW_TEXT_UPLOADS === true)) {
+            throw new \VGTOmegaVault\ValidationException(__('Text uploads are disabled.', 'vgt-omega-vault'), 415);
         }
 
-        if ($old_backtrack !== false) ini_set('pcre.backtrack_limit', $old_backtrack);
-        if ($old_recursion !== false) ini_set('pcre.recursion_limit', $old_recursion);
+        $contents = file_get_contents($path);
+        if ($contents === false) {
+            throw new \VGTOmegaVault\StorageException('Text file read failed.');
+        }
+
+        if (str_contains($contents, "\0") || !mb_check_encoding($contents, 'UTF-8')) {
+            throw new \VGTOmegaVault\SecurityException('Text file encoding validation failed.');
+        }
     }
 
-    /**
-     * Parses size strings like "128M" or "1G" into bytes. Returns -1 if unlimited/empty.
-     */
-    private static function parse_size(string $size_str): int {
-        $size_str = trim($size_str);
-        if ($size_str === '' || $size_str === '-1') {
+    private static function sanitizeOriginalName(string $name): string
+    {
+        $name = wp_basename(str_replace(["\0", '\\'], ['', '/'], $name));
+        $name = sanitize_file_name($name);
+        if ($name === '' || strlen($name) > 180) {
+            throw new \VGTOmegaVault\ValidationException(__('File name is invalid.', 'vgt-omega-vault'), 422);
+        }
+        return $name;
+    }
+
+    private static function uploadErrorMessage(int $code): string
+    {
+        return match($code) {
+            UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => __('Uploaded file is too large.', 'vgt-omega-vault'),
+            UPLOAD_ERR_PARTIAL => __('The upload was incomplete.', 'vgt-omega-vault'),
+            UPLOAD_ERR_NO_FILE => __('No file was uploaded.', 'vgt-omega-vault'),
+            UPLOAD_ERR_NO_TMP_DIR => __('The server upload directory is unavailable.', 'vgt-omega-vault'),
+            UPLOAD_ERR_CANT_WRITE => __('The server could not write the upload.', 'vgt-omega-vault'),
+            UPLOAD_ERR_EXTENSION => __('A server extension blocked the upload.', 'vgt-omega-vault'),
+            default => __('The upload failed.', 'vgt-omega-vault'),
+        };
+    }
+
+    private static function parseIniBytes(string $value): int
+    {
+        $value = trim($value);
+        if ($value === '' || $value === '-1') {
             return -1;
         }
-        $last = strtolower($size_str[strlen($size_str)-1]);
-        $val = (int)$size_str;
-        switch ($last) {
-            case 'g':
-                $val *= 1024 * 1024 * 1024;
-                break;
-            case 'm':
-                $val *= 1024 * 1024;
-                break;
-            case 'k':
-                $val *= 1024;
-                break;
-        }
-        return $val;
-    }
 
-    /**
-     * Sanitizes images by reconstructing them through PHP GD, stripping all metadata.
-     * Prevents Decompression Bombs by estimating memory requirements first.
-     */
-    private static function sanitize_image(string $path, string $ext): void {
-        if (!function_exists('imagecreatefromstring') || !function_exists('imagejpeg') || !function_exists('imagepng') || !function_exists('imagegif')) {
-            return; // Fallback if GD is missing, regex-checks already ran
-        }
-
-        // Decompression Bomb Protection (DoS Mitigation)
-        $info = @getimagesize($path);
-        if (is_array($info)) {
-            $width = $info[0] ?? 0;
-            $height = $info[1] ?? 0;
-            // Estimated RAM required: width * height * 4 bytes/pixel * safety buffer multiplier
-            $estimated_memory = $width * $height * 4 * 5; 
-            
-            $memory_limit_str = ini_get('memory_limit');
-            $memory_limit = self::parse_size($memory_limit_str);
-            
-            // Allow a maximum of 64MB working RAM, or 85% of memory_limit if smaller
-            $max_mem = 67108864; // 64MB
-            if ($memory_limit > 0 && $memory_limit < $max_mem) {
-                $max_mem = (int)($memory_limit * 0.85);
-            }
-
-            if ($estimated_memory > $max_mem) {
-                throw new \VGTOmegaVault\ValidationException(esc_html__('Bildauflösung überschreitet zulässigen Speicherbedarf (Decompressions-Bombe).', 'vgt-omega-vault'));
-            }
-        }
-
-        $img_data = @file_get_contents($path);
-        if ($img_data === false) {
-            return;
-        }
-
-        $im = @imagecreatefromstring($img_data);
-        if ($im === false) {
-            throw new \VGTOmegaVault\SecurityException('Failed to parse image structure. Corrupted or malicious file.');
-        }
-
-        // Re-render and save the image, which discards original EXIF/XMP fields
-        switch ($ext) {
-            case 'jpg':
-            case 'jpeg':
-                $success = @imagejpeg($im, $path, 90);
-                break;
-            case 'png':
-                @imagealphablending($im, false);
-                @imagesavealpha($im, true);
-                $success = @imagepng($im, $path, 6);
-                break;
-            case 'gif':
-                $success = @imagegif($im, $path);
-                break;
-            default:
-                $success = false;
-        }
-
-        @imagedestroy($im);
-
-        if (!$success) {
-            throw new \VGTOmegaVault\SecurityException('Failed to write sanitized image stream.');
-        }
-    }
-
-    /**
-     * Neutralizes Formula Injections (CSV/Excel) by escaping leading mathematical characters.
-     */
-    private static function sanitize_csv(string $path, string $contents): void {
-        $lines = explode("\n", $contents);
-        $modified = false;
-
-        foreach ($lines as $i => $line) {
-            // Check cells in CSV
-            $cells = str_getcsv($line);
-            $cell_modified = false;
-            foreach ($cells as $j => $cell) {
-                if ($cell !== '') {
-                    $first_char = $cell[0];
-                    if (in_array($first_char, ['=', '+', '-', '@'], true)) {
-                        // Prepend single quote to neutralize formula injection
-                        $cells[$j] = "'" . $cell;
-                        $cell_modified = true;
-                        $modified = true;
-                    }
-                }
-            }
-            if ($cell_modified) {
-                // Reconstruct line
-                $fp = fopen('php://temp', 'r+');
-                if ($fp !== false) {
-                    fputcsv($fp, $cells);
-                    rewind($fp);
-                    $new_line = stream_get_contents($fp);
-                    fclose($fp);
-                    $lines[$i] = rtrim($new_line, "\r\n");
-                }
-            }
-        }
-
-        if ($modified) {
-            $new_contents = implode("\n", $lines);
-            @file_put_contents($path, $new_contents, LOCK_EX);
-        }
+        $unit = strtolower(substr($value, -1));
+        $number = (int) $value;
+        return match($unit) {
+            'g' => $number * 1024 * 1024 * 1024,
+            'm' => $number * 1024 * 1024,
+            'k' => $number * 1024,
+            default => $number,
+        };
     }
 }

@@ -1,0 +1,189 @@
+/* STATUS: PLATIN */
+
+.vgt-omega-shell {
+    --vgt-bg: #080a0d;
+    --vgt-panel: #11151b;
+    --vgt-text: #f5f7fa;
+    --vgt-muted: #aab2bf;
+    --vgt-border: #303846;
+    --vgt-accent: #d8b85a;
+    --vgt-danger: #ef5350;
+    --vgt-success: #66bb6a;
+    box-sizing: border-box;
+    width: min(100%, 52rem);
+    margin: 2rem auto;
+    padding: clamp(1.25rem, 3vw, 2.5rem);
+    border: 1px solid var(--vgt-border);
+    border-radius: 1rem;
+    background: var(--vgt-bg);
+    color: var(--vgt-text);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.vgt-omega-theme-light {
+    --vgt-bg: #ffffff;
+    --vgt-panel: #f4f6f8;
+    --vgt-text: #14181f;
+    --vgt-muted: #596273;
+    --vgt-border: #cbd2dc;
+    --vgt-accent: #705500;
+}
+
+.vgt-omega-shell *,
+.vgt-omega-shell *::before,
+.vgt-omega-shell *::after {
+    box-sizing: inherit;
+}
+
+.vgt-omega-header h2 {
+    margin: 0;
+    color: var(--vgt-text);
+    font-size: clamp(1.6rem, 4vw, 2.35rem);
+}
+
+.vgt-omega-header p {
+    margin: 0.5rem 0 1.5rem;
+    color: var(--vgt-muted);
+}
+
+.vgt-omega-form,
+.vgt-omega-step {
+    display: grid;
+    gap: 1rem;
+}
+
+.vgt-omega-step {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.vgt-omega-step[hidden] {
+    display: none;
+}
+
+.vgt-omega-field {
+    display: grid;
+    gap: 0.45rem;
+}
+
+.vgt-omega-field label,
+.vgt-omega-radio-group legend {
+    color: var(--vgt-text);
+    font-weight: 650;
+}
+
+.vgt-omega-field input,
+.vgt-omega-field textarea,
+.vgt-omega-field select {
+    width: 100%;
+    min-height: 2.8rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--vgt-border);
+    border-radius: 0.55rem;
+    background: var(--vgt-panel);
+    color: var(--vgt-text);
+    font: inherit;
+}
+
+.vgt-omega-field textarea {
+    min-height: 9rem;
+    resize: vertical;
+}
+
+.vgt-omega-field input:focus,
+.vgt-omega-field textarea:focus,
+.vgt-omega-field select:focus,
+.vgt-omega-shell button:focus {
+    outline: 3px solid color-mix(in srgb, var(--vgt-accent) 45%, transparent);
+    outline-offset: 2px;
+}
+
+.vgt-omega-radio-group {
+    display: grid;
+    gap: 0.55rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.vgt-omega-radio-group label,
+.vgt-omega-consent {
+    display: flex;
+    gap: 0.65rem;
+    align-items: flex-start;
+}
+
+.vgt-omega-radio-group input,
+.vgt-omega-consent input {
+    width: auto;
+    margin-top: 0.2rem;
+}
+
+.vgt-omega-primary,
+.vgt-omega-secondary,
+.vgt-omega-submit {
+    min-height: 2.8rem;
+    padding: 0.7rem 1rem;
+    border: 1px solid var(--vgt-accent);
+    border-radius: 0.55rem;
+    background: var(--vgt-accent);
+    color: #111;
+    font: inherit;
+    font-weight: 750;
+    cursor: pointer;
+}
+
+.vgt-omega-secondary {
+    background: transparent;
+    color: var(--vgt-text);
+}
+
+.vgt-omega-submit:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+.vgt-omega-step-actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: space-between;
+}
+
+.vgt-omega-status {
+    min-height: 1.5rem;
+    margin: 0;
+    color: var(--vgt-muted);
+}
+
+.vgt-omega-status[data-state="error"] {
+    color: var(--vgt-danger);
+}
+
+.vgt-omega-status[data-state="success"] {
+    color: var(--vgt-success);
+}
+
+.vgt-omega-honeypot {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+.vgt-omega-media img,
+.vgt-omega-media video {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 0.65rem;
+}
+
+.vgt-omega-error {
+    padding: 1rem;
+    border: 1px solid #ef5350;
+    color: #b71c1c;
+}
